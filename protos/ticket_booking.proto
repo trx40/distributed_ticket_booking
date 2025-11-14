@@ -1,0 +1,92 @@
+syntax = "proto3";
+
+package ticketbooking;
+
+// Client to Application Server
+service TicketBookingService {
+  rpc Login(LoginRequest) returns (LoginResponse);
+  rpc Logout(LogoutRequest) returns (StatusResponse);
+  rpc Post(PostRequest) returns (StatusResponse);
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc GetLLMAssistance(LLMRequest) returns (LLMResponse);
+}
+
+message LoginRequest {
+  string username = 1;
+  string password = 2;
+}
+
+message LoginResponse {
+  string status = 1;
+  string token = 2;
+  string message = 3;
+}
+
+message LogoutRequest {
+  string token = 1;
+}
+
+message StatusResponse {
+  string status = 1;
+  string message = 2;
+}
+
+message PostRequest {
+  string token = 1;
+  string type = 2;  // "book_ticket", "cancel_booking", "payment"
+  string data = 3;  // JSON encoded data
+}
+
+message GetRequest {
+  string token = 1;
+  string type = 2;  // "available_seats", "my_bookings", "movie_list"
+  string params = 3;  // JSON encoded params
+}
+
+message GetResponse {
+  string status = 1;
+  repeated DataItem items = 2;
+  string message = 3;
+}
+
+message DataItem {
+  string id = 1;
+  string data = 2;  // JSON encoded data
+}
+
+message LLMRequest {
+  string token = 1;
+  string query = 2;
+  string context = 3;
+}
+
+message LLMResponse {
+  string status = 1;
+  string answer = 2;
+}
+
+// Internal Application Server to Application Server
+service InternalService {
+  rpc ProcessBusinessRequest(BusinessRequest) returns (BusinessResponse);
+  rpc SyncState(StateRequest) returns (StateResponse);
+}
+
+message BusinessRequest {
+  string request_id = 1;
+  string payload = 2;
+  string context = 3;
+}
+
+message BusinessResponse {
+  string status = 1;
+  string result = 2;
+}
+
+message StateRequest {
+  string data = 1;
+}
+
+message StateResponse {
+  string status = 1;
+  string data = 2;
+}
