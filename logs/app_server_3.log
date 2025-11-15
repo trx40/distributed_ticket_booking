@@ -1,6 +1,32 @@
-Traceback (most recent call last):
-  File "/home/tejas/Project_claude/distributed_ticket_booking/src/servers/application_server.py", line 10, in <module>
-    import ticket_booking_pb2_grpc
-  File "/home/tejas/Project_claude/distributed_ticket_booking/src/servers/ticket_booking_pb2_grpc.py", line 5, in <module>
-    from . import ticket_booking_pb2 as ticket__booking__pb2
-ImportError: attempted relative import with no known parent package
+[DEBUG] Application server starting...
+[DEBUG] Python path: ['/home/tejas/Project_claude/distributed_ticket_booking/src/servers', '/usr/lib/python39.zip', '/usr/lib/python3.9', '/usr/lib/python3.9/lib-dynload', '/home/tejas/Project_claude/distributed_ticket_booking/venv/lib/python3.9/site-packages']
+[DEBUG] Importing protobuf modules...
+[DEBUG] Importing custom modules...
+[DEBUG] All imports successful!
+[AppServer-node3] Initializing...
+[AppServer-node3] Auth manager initialized
+[node3] Initialized as FOLLOWER
+[AppServer-node3] Raft node created
+[node3] Raft gRPC server started on port 50063
+[node3] Raft background threads started
+[AppServer-node3] Raft node started
+[AppServer-node3] Initialized on port 50053
+[AppServer-node3] Raft node on port 50063
+[AppServer-node3] LLM server: localhost:50060
+[AppServer-node3] Server started on port 50053
+[AppServer-node3] Waiting for Raft initialization...
+[node3] Election timer started
+[node3] Heartbeat timer started
+[node3] Received RequestVote from node1 for term 1
+[node3] Stepping down to FOLLOWER (term 1)
+[node3] Granted vote to node1 for term 1
+[node3] Sending RequestVote response to node1: granted=True
+[AppServer-node3] Raft Status: FOLLOWER (Term: 1)
+[node3] Received RequestVote from test for term 0
+[node3] Denied vote to test - term mismatch (0 vs 1)
+[node3] Sending RequestVote response to test: granted=False
+[node3] Received RequestVote from test for term 0
+[node3] Denied vote to test - term mismatch (0 vs 1)
+[node3] Sending RequestVote response to test: granted=False
+[node3] Applied log entry 0: {'status': 'success', 'message': 'Booking confirmed', 'booking_id': 'BK000001', 'details': {'booking_id': 'BK000001', 'username': 'user1', 'movie_id': 'movie1', 'movie_title': 'The Matrix Reloaded', 'seats': [50, 51, 52], 'price': 45.0, 'status': 'confirmed', 'timestamp': '2025-11-15T12:17:35.563951'}}
+[node3] Applied log entry 1: {'status': 'success', 'message': 'Booking confirmed', 'booking_id': 'BK000002', 'details': {'booking_id': 'BK000002', 'username': 'user1', 'movie_id': 'movie3', 'movie_title': 'Interstellar Journey', 'seats': [11, 12, 13], 'price': 54.0, 'status': 'confirmed', 'timestamp': '2025-11-15T12:18:58.000056'}}

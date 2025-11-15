@@ -1,6 +1,13 @@
-Traceback (most recent call last):
-  File "/home/tejas/Project_claude/distributed_ticket_booking/src/servers/llm_server.py", line 8, in <module>
-    import llm_service_pb2_grpc
-  File "/home/tejas/Project_claude/distributed_ticket_booking/src/servers/llm_service_pb2_grpc.py", line 5, in <module>
-    from . import llm_service_pb2 as llm__service__pb2
-ImportError: attempted relative import with no known parent package
+[LLM Server] Initializing...
+[LLM Server] Loading model (this may take a minute)...
+/home/tejas/Project_claude/distributed_ticket_booking/venv/lib/python3.9/site-packages/transformers/utils/generic.py:441: FutureWarning: `torch.utils._pytree._register_pytree_node` is deprecated. Please use `torch.utils._pytree.register_pytree_node` instead.
+  _torch_pytree._register_pytree_node(
+/home/tejas/Project_claude/distributed_ticket_booking/venv/lib/python3.9/site-packages/transformers/utils/generic.py:309: FutureWarning: `torch.utils._pytree._register_pytree_node` is deprecated. Please use `torch.utils._pytree.register_pytree_node` instead.
+  _torch_pytree._register_pytree_node(
+/home/tejas/Project_claude/distributed_ticket_booking/venv/lib/python3.9/site-packages/huggingface_hub/file_download.py:942: FutureWarning: `resume_download` is deprecated and will be removed in version 1.0.0. Downloads always resume when possible. If you want to force a new download, use `force_download=True`.
+  warnings.warn(
+[LLM Server] Model loaded successfully
+[LLM Server] Initialization complete
+[LLM Server] Started on port 50060
+[LLM Server] Ready to handle queries
+------------------------------------------------------------

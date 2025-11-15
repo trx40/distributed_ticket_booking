@@ -1,6 +1,53 @@
-Traceback (most recent call last):
-  File "/home/tejas/Project_claude/distributed_ticket_booking/src/servers/application_server.py", line 10, in <module>
-    import ticket_booking_pb2_grpc
-  File "/home/tejas/Project_claude/distributed_ticket_booking/src/servers/ticket_booking_pb2_grpc.py", line 5, in <module>
-    from . import ticket_booking_pb2 as ticket__booking__pb2
-ImportError: attempted relative import with no known parent package
+[DEBUG] Application server starting...
+[DEBUG] Python path: ['/home/tejas/Project_claude/distributed_ticket_booking/src/servers', '/usr/lib/python39.zip', '/usr/lib/python3.9', '/usr/lib/python3.9/lib-dynload', '/home/tejas/Project_claude/distributed_ticket_booking/venv/lib/python3.9/site-packages']
+[DEBUG] Importing protobuf modules...
+[DEBUG] Importing custom modules...
+[DEBUG] All imports successful!
+[AppServer-node1] Initializing...
+[AppServer-node1] Auth manager initialized
+[node1] Initialized as FOLLOWER
+[AppServer-node1] Raft node created
+[node1] Raft gRPC server started on port 50061
+[node1] Raft background threads started
+[AppServer-node1] Raft node started
+[AppServer-node1] Initialized on port 50051
+[AppServer-node1] Raft node on port 50061
+[AppServer-node1] LLM server: localhost:50060
+[AppServer-node1] Server started on port 50051
+[AppServer-node1] Waiting for Raft initialization...
+[node1] Election timer started
+[node1] Heartbeat timer started
+[AppServer-node1] Raft Status: FOLLOWER (Term: 0)
+[node1] Election timeout, starting election
+[node1] Starting election for term 1
+[node1] Requesting vote from node2 at localhost:50062
+[node1] Received vote from node2 (total: 2)
+[node1] Requesting vote from node3 at localhost:50063
+[node1] Received vote from node3 (total: 3)
+[node1] Election complete: 3 votes, need 3 for majority
+[node1] Became LEADER for term 1
+[node1] Received RequestVote from test for term 0
+[node1] Denied vote to test - term mismatch (0 vs 1)
+[node1] Sending RequestVote response to test: granted=False
+[node1] Received RequestVote from test for term 0
+[node1] Denied vote to test - term mismatch (0 vs 1)
+[node1] Sending RequestVote response to test: granted=False
+[AppServer-node1] Login attempt: user1
+[AppServer-node1] GET request: movie_list
+[AppServer-node1] POST request: book_ticket
+[AppServer-node1] Submitting command to Raft: book_ticket
+[node1] Command submitted to log index 0
+[node1] Applied log entry 0: {'status': 'success', 'message': 'Booking confirmed', 'booking_id': 'BK000001', 'details': {'booking_id': 'BK000001', 'username': 'user1', 'movie_id': 'movie1', 'movie_title': 'The Matrix Reloaded', 'seats': [50, 51, 52], 'price': 45.0, 'status': 'confirmed', 'timestamp': '2025-11-15T12:17:35.031092'}}
+[node1] Command committed at index 0
+[AppServer-node1] Command committed, applying to state machine
+[AppServer-node1] Login attempt: user1
+[AppServer-node1] GET request: my_bookings
+[AppServer-node1] GET request: movie_list
+[AppServer-node1] GET request: available_seats
+[AppServer-node1] POST request: book_ticket
+[AppServer-node1] Submitting command to Raft: book_ticket
+[node1] Command submitted to log index 1
+[node1] Applied log entry 1: {'status': 'success', 'message': 'Booking confirmed', 'booking_id': 'BK000002', 'details': {'booking_id': 'BK000002', 'username': 'user1', 'movie_id': 'movie3', 'movie_title': 'Interstellar Journey', 'seats': [11, 12, 13], 'price': 54.0, 'status': 'confirmed', 'timestamp': '2025-11-15T12:18:57.439431'}}
+[node1] Command committed at index 1
+[AppServer-node1] Command committed, applying to state machine
+[AppServer-node1] Logout request

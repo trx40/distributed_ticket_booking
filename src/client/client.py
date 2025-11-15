@@ -182,7 +182,7 @@ class TicketBookingClient:
             )
             
             print("\n[Processing booking...]")
-            response = stub.Post(request, timeout=30.0)
+            response = stub.Post(request, timeout=60.0)
             channel.close()
             
             if response.status == "success":
@@ -335,7 +335,7 @@ class TicketBookingClient:
             )
             
             print("\n[Consulting AI assistant...]")
-            response = stub.GetLLMAssistance(request, timeout=30.0)
+            response = stub.GetLLMAssistance(request, timeout=60.0)
             channel.close()
             
             if response.status == "success":

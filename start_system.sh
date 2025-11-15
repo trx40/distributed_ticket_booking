@@ -1,4 +1,4 @@
-!/bin/bash
+#!/bin/bash
 # Script to start all components of the distributed system
 
 echo "=================================================="

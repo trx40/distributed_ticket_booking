@@ -1,4 +1,4 @@
-!/bin/bash
+#!/bin/bash
 # Automated testing script
 
 echo "=================================================="

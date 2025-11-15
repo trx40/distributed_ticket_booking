@@ -2,7 +2,7 @@
 """Client and server classes corresponding to protobuf-defined services."""
 import grpc
 
-from . import llm_service_pb2 as llm__service__pb2
+import llm_service_pb2 as llm__service__pb2
 
 
 class LLMServiceStub(object):

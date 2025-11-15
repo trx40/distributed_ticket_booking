@@ -1,9 +1,28 @@
+#!/usr/bin/env python3
+"""Application Server with Raft Consensus"""
+
 import grpc
 import json
 import sys
+import os
 import time
 import threading
 from concurrent import futures
+
+# Force unbuffered output
+sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1)
+sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1)
+
+print(f"[DEBUG] Application server starting...", flush=True)
+print(f"[DEBUG] Python path: {sys.path}", flush=True)
+
+# Add paths for imports
+sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../raft'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../utils'))
+
+print(f"[DEBUG] Importing protobuf modules...", flush=True)
 
 # Import generated protobuf files
 import ticket_booking_pb2
@@ -11,10 +30,13 @@ import ticket_booking_pb2_grpc
 import llm_service_pb2
 import llm_service_pb2_grpc
 
+print(f"[DEBUG] Importing custom modules...", flush=True)
+
 # Import custom modules
-sys.path.append('../')
-from utils.auth import AuthManager
-from raft.raft_node import RaftNode
+from auth import AuthManager
+from raft_node import RaftNode
+
+print(f"[DEBUG] All imports successful!", flush=True)
 
 class ApplicationServer(ticket_booking_pb2_grpc.TicketBookingServiceServicer,
                        ticket_booking_pb2_grpc.InternalServiceServicer):
@@ -25,19 +47,23 @@ class ApplicationServer(ticket_booking_pb2_grpc.TicketBookingServiceServicer,
         self.raft_port = raft_port
         self.llm_server_address = llm_server_address
         
+        print(f"[AppServer-{node_id}] Initializing...", flush=True)
+        
         # Initialize authentication manager
         self.auth_manager = AuthManager()
+        print(f"[AppServer-{node_id}] Auth manager initialized", flush=True)
         
         # Initialize Raft node
         self.raft_node = RaftNode(node_id, peers, raft_port)
+        print(f"[AppServer-{node_id}] Raft node created", flush=True)
         
-        # Start Raft in separate thread
-        self.raft_thread = threading.Thread(target=self.raft_node.start, daemon=True)
-        self.raft_thread.start()
+        # Start Raft node directly (not in separate thread)
+        self.raft_node.start()
+        print(f"[AppServer-{node_id}] Raft node started", flush=True)
         
-        print(f"[AppServer-{node_id}] Initialized on port {port}")
-        print(f"[AppServer-{node_id}] Raft node on port {raft_port}")
-        print(f"[AppServer-{node_id}] LLM server: {llm_server_address}")
+        print(f"[AppServer-{node_id}] Initialized on port {port}", flush=True)
+        print(f"[AppServer-{node_id}] Raft node on port {raft_port}", flush=True)
+        print(f"[AppServer-{node_id}] LLM server: {llm_server_address}", flush=True)
     
     # ========================================================================
     # Client-facing RPC Methods
@@ -287,20 +313,33 @@ class ApplicationServer(ticket_booking_pb2_grpc.TicketBookingServiceServicer,
         """Submit command to Raft consensus"""
         # Check if this node is leader
         if not self.raft_node.is_leader():
-            return {
-                'status': 'error',
-                'message': 'Not the leader. Please retry with the current leader.'
-            }
+            # Wait a bit for leader election to complete
+            max_wait = 3.0
+            start = time.time()
+            while time.time() - start < max_wait:
+                if self.raft_node.is_leader():
+                    break
+                time.sleep(0.5)
+            
+            if not self.raft_node.is_leader():
+                return {
+                    'status': 'error',
+                    'message': 'Not the leader. This server cannot process writes. Please try another server.'
+                }
         
         # Submit command
         command_json = json.dumps(command)
+        print(f"[AppServer-{self.node_id}] Submitting command to Raft: {command.get('operation')}")
+        
         result = self.raft_node.submit_command(command_json)
         
         if result['status'] == 'success':
             # Command committed, get result from state machine
+            print(f"[AppServer-{self.node_id}] Command committed, applying to state machine")
             state_result = self.raft_node.state_machine.apply_command(command_json)
             return state_result
         else:
+            print(f"[AppServer-{self.node_id}] Command failed: {result.get('message')}")
             return result
     
     def _build_context(self, username):
