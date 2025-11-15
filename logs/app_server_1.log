@@ -11,12 +11,11 @@
 [AppServer-node1] LLM server: localhost:50060
 [AppServer-node1] Server started on port 50051
 [AppServer-node1] Waiting for Raft initialization...
-[node1] Heartbeat loop started
 [node1] Apply loop started
 [node1] Election loop started
+[node1] Heartbeat loop started
 [AppServer-node1] Raft Status: FOLLOWER (Term: 0)
 [node1] Starting election for term 1
-[node1] Got vote from node3
 [node1] Got vote from node2
-[node1] Election result: 3/3 votes (need 2)
+[node1] Election result: 2/3 votes (need 2)
 [node1] Became LEADER for term 1

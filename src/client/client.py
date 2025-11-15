@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Fixed Client with automatic retry across all nodes
-Handles leader election and failover gracefully
+Improved Client with Leader Caching
+Handles leader election and failover gracefully with minimal latency
 """
 
 import grpc
@@ -14,8 +14,8 @@ import ticket_booking_pb2
 import ticket_booking_pb2_grpc
 
 
-class TicketBookingClient:
-    """Client with intelligent multi-node retry"""
+class SmartTicketBookingClient:
+    """Client with intelligent leader caching and fast failover"""
     
     def __init__(self, server_addresses):
         """
@@ -25,30 +25,81 @@ class TicketBookingClient:
         self.server_addresses = server_addresses
         self.token = None
         self.username = None
+        
+        # Leader caching mechanism
+        self.last_known_leader = None  # Cache the last known leader address
+        self.leader_failures = 0  # Track consecutive failures to cached leader
+        self.max_leader_failures = 2  # After this many failures, invalidate cache
+        
         print(f"[Client] Initialized with {len(server_addresses)} servers")
         print(f"[Client] Servers: {', '.join(server_addresses)}")
+        print(f"[Client] Leader caching enabled for fast failover")
     
-    def _execute_with_retry(self, operation_func, max_retries=None):
+    def _get_ordered_servers(self):
+        """
+        Get server list ordered by likelihood of being leader
+        Returns list with cached leader first, then others
+        """
+        if self.last_known_leader and self.leader_failures < self.max_leader_failures:
+            # Try cached leader first
+            ordered = [self.last_known_leader]
+            ordered.extend([s for s in self.server_addresses if s != self.last_known_leader])
+            return ordered
+        else:
+            # No cache or too many failures - try all servers
+            return list(self.server_addresses)
+    
+    def _update_leader_cache(self, address, success=True):
+        """
+        Update leader cache based on operation result
+        address: the server address that was tried
+        success: whether the operation succeeded
+        """
+        if success:
+            # Operation succeeded - this is likely the leader
+            if self.last_known_leader != address:
+                print(f"[Client] Updated leader cache: {address}")
+                self.last_known_leader = address
+                self.leader_failures = 0
+        else:
+            # Operation failed
+            if self.last_known_leader == address:
+                self.leader_failures += 1
+                if self.leader_failures >= self.max_leader_failures:
+                    print(f"[Client] Invalidating leader cache after {self.leader_failures} failures")
+                    self.last_known_leader = None
+                    self.leader_failures = 0
+    
+    def _execute_with_retry(self, operation_func, max_retries=None, is_write=True):
         """
         Execute operation with automatic retry across all nodes
-        For write operations, this ensures we find the leader
+        Uses leader cache for write operations to minimize latency
+        
+        is_write: if True, uses leader cache and validates leadership
         """
         if max_retries is None:
-            max_retries = len(self.server_addresses) * 2  # Try each server twice
+            max_retries = len(self.server_addresses) * 2
         
         last_error = None
+        attempt = 0
         
-        for attempt in range(max_retries):
-            # Try each server
-            for address in self.server_addresses:
+        while attempt < max_retries:
+            # Get server list ordered by leader probability
+            ordered_servers = self._get_ordered_servers()
+            
+            for address in ordered_servers:
                 try:
+                    # Show which server we're trying (only on first attempt)
+                    if attempt == 0 and is_write and address == self.last_known_leader:
+                        print(f"[Client] Trying cached leader: {address}")
+                    
                     channel = grpc.insecure_channel(address, options=[
                         ('grpc.keepalive_time_ms', 10000),
                         ('grpc.keepalive_timeout_ms', 5000),
                     ])
                     
-                    # Test connection
-                    grpc.channel_ready_future(channel).result(timeout=3)
+                    # Quick connection test with short timeout
+                    grpc.channel_ready_future(channel).result(timeout=2)
                     
                     stub = ticket_booking_pb2_grpc.TicketBookingServiceStub(channel)
                     
@@ -56,32 +107,43 @@ class TicketBookingClient:
                     result = operation_func(stub)
                     channel.close()
                     
-                    # Success!
+                    # Success! Update leader cache
+                    if is_write:
+                        self._update_leader_cache(address, success=True)
+                    
                     return result
                     
                 except grpc.RpcError as e:
                     error_msg = str(e.details()) if hasattr(e, 'details') else str(e)
                     
-                    # If it's a "not leader" error, try next server
+                    # Check if it's a "not leader" error
                     if "Not the leader" in error_msg or "not leader" in error_msg.lower():
-                        print(f"[Client] {address} is not leader, trying next server...")
+                        # This server is not the leader
+                        if is_write:
+                            self._update_leader_cache(address, success=False)
                         last_error = error_msg
                         continue
                     
-                    # Other errors - try next server
-                    print(f"[Client] Error from {address}: {error_msg}")
+                    # Other gRPC errors
+                    if is_write:
+                        self._update_leader_cache(address, success=False)
                     last_error = error_msg
                     continue
                     
                 except Exception as e:
-                    print(f"[Client] Connection failed to {address}: {e}")
+                    # Connection failed - server likely down
+                    if is_write and address == self.last_known_leader:
+                        print(f"[Client] Cached leader {address} unreachable")
+                        self._update_leader_cache(address, success=False)
                     last_error = str(e)
                     continue
             
-            # If we've tried all servers and no success, wait a bit before retrying
-            if attempt < max_retries - 1:
-                print(f"[Client] Retry {attempt + 1}/{max_retries} - waiting 2 seconds...")
-                time.sleep(2)
+            # If we've tried all servers, wait before retrying
+            attempt += 1
+            if attempt < max_retries:
+                wait_time = min(2, attempt * 0.5)  # Progressive backoff
+                print(f"[Client] Retry {attempt}/{max_retries} in {wait_time}s...")
+                time.sleep(wait_time)
         
         # All retries exhausted
         raise Exception(f"All servers unavailable after {max_retries} attempts. Last error: {last_error}")
@@ -96,7 +158,10 @@ class TicketBookingClient:
             return stub.Login(request, timeout=5.0)
         
         try:
-            response = self._execute_with_retry(_login, max_retries=len(self.server_addresses))
+            # Login is a read operation - any server can handle it
+            response = self._execute_with_retry(_login, 
+                                               max_retries=len(self.server_addresses),
+                                               is_write=False)
             
             if response.status == "success":
                 self.token = response.token
@@ -122,7 +187,7 @@ class TicketBookingClient:
             return stub.Logout(request, timeout=5.0)
         
         try:
-            response = self._execute_with_retry(_logout)
+            response = self._execute_with_retry(_logout, is_write=False)
             print(f"\n✓ {response.message}")
             self.token = None
             self.username = None
@@ -147,7 +212,8 @@ class TicketBookingClient:
             return stub.Get(request, timeout=5.0)
         
         try:
-            response = self._execute_with_retry(_get_movies)
+            # Read operation - any server can handle
+            response = self._execute_with_retry(_get_movies, is_write=False)
             
             if response.status == "success":
                 movies = []
@@ -179,7 +245,8 @@ class TicketBookingClient:
             return stub.Get(request, timeout=5.0)
         
         try:
-            response = self._execute_with_retry(_get_seats)
+            # Read operation - any server can handle
+            response = self._execute_with_retry(_get_seats, is_write=False)
             
             if response.status == "success" and response.items:
                 data = json.loads(response.items[0].data)
@@ -193,7 +260,10 @@ class TicketBookingClient:
             return []
     
     def book_ticket(self, movie_id, seats):
-        """Book movie tickets - with automatic leader finding"""
+        """
+        Book movie tickets - WRITE OPERATION
+        Uses leader cache for fast response
+        """
         if not self.token:
             print("\n✗ Please login first")
             return None
@@ -213,8 +283,15 @@ class TicketBookingClient:
             return stub.Post(request, timeout=15.0)
         
         try:
-            print("\n[Processing booking - finding leader...]")
-            response = self._execute_with_retry(_book, max_retries=len(self.server_addresses) * 3)
+            print("\n[Processing booking...]")
+            start_time = time.time()
+            
+            # This is a WRITE operation - uses leader cache
+            response = self._execute_with_retry(_book, 
+                                               max_retries=len(self.server_addresses) * 3,
+                                               is_write=True)
+            
+            elapsed = time.time() - start_time
             
             if response.status == "success":
                 result = json.loads(response.message)
@@ -227,6 +304,7 @@ class TicketBookingClient:
                 print(f"  Total Price: ${result['details']['price']:.2f}")
                 print(f"  Status: {result['details']['status']}")
                 print(f"  Booked at: {result['details']['timestamp']}")
+                print(f"  Response time: {elapsed:.2f}s")
                 print(f"{'='*60}\n")
                 return result
             else:
@@ -239,7 +317,7 @@ class TicketBookingClient:
             return None
     
     def cancel_booking(self, booking_id):
-        """Cancel a booking"""
+        """Cancel a booking - WRITE OPERATION"""
         if not self.token:
             print("\n✗ Please login first")
             return False
@@ -255,7 +333,12 @@ class TicketBookingClient:
         
         try:
             print("\n[Processing cancellation...]")
-            response = self._execute_with_retry(_cancel)
+            start_time = time.time()
+            
+            # WRITE operation - uses leader cache
+            response = self._execute_with_retry(_cancel, is_write=True)
+            
+            elapsed = time.time() - start_time
             
             if response.status == "success":
                 result = json.loads(response.message)
@@ -264,6 +347,7 @@ class TicketBookingClient:
                 print(f"{'='*60}")
                 print(f"  Refund Amount: ${result.get('refund_amount', 0):.2f}")
                 print(f"  Refund will be processed in 5-7 business days")
+                print(f"  Response time: {elapsed:.2f}s")
                 print(f"{'='*60}\n")
                 return True
             else:
@@ -275,7 +359,7 @@ class TicketBookingClient:
             return False
     
     def process_payment(self, booking_id, payment_method='card'):
-        """Process payment for a booking"""
+        """Process payment for a booking - WRITE OPERATION"""
         if not self.token:
             print("\n✗ Please login first")
             return False
@@ -294,7 +378,12 @@ class TicketBookingClient:
         
         try:
             print("\n[Processing payment...]")
-            response = self._execute_with_retry(_payment)
+            start_time = time.time()
+            
+            # WRITE operation - uses leader cache
+            response = self._execute_with_retry(_payment, is_write=True)
+            
+            elapsed = time.time() - start_time
             
             if response.status == "success":
                 result = json.loads(response.message)
@@ -304,6 +393,7 @@ class TicketBookingClient:
                 print(f"  Payment ID: {result.get('payment_id')}")
                 print(f"  Booking ID: {booking_id}")
                 print(f"  Method: {payment_method}")
+                print(f"  Response time: {elapsed:.2f}s")
                 print(f"{'='*60}\n")
                 return True
             else:
@@ -315,7 +405,7 @@ class TicketBookingClient:
             return False
     
     def get_my_bookings(self):
-        """Get user's bookings"""
+        """Get user's bookings - READ OPERATION"""
         if not self.token:
             print("\n✗ Please login first")
             return []
@@ -329,7 +419,8 @@ class TicketBookingClient:
             return stub.Get(request, timeout=5.0)
         
         try:
-            response = self._execute_with_retry(_get_bookings)
+            # Read operation - any server can handle
+            response = self._execute_with_retry(_get_bookings, is_write=False)
             
             if response.status == "success":
                 bookings = []
@@ -346,7 +437,7 @@ class TicketBookingClient:
             return []
     
     def ask_llm(self, query):
-        """Ask LLM for assistance"""
+        """Ask LLM for assistance - READ OPERATION"""
         if not self.token:
             print("\n✗ Please login first")
             return
@@ -361,7 +452,7 @@ class TicketBookingClient:
         
         try:
             print("\n[Consulting AI assistant...]")
-            response = self._execute_with_retry(_ask_llm)
+            response = self._execute_with_retry(_ask_llm, is_write=False)
             
             if response.status == "success":
                 print(f"\n{'='*60}")
@@ -419,17 +510,23 @@ class TicketBookingClient:
             print("-"*80)
         
         print()
+    
+    def get_leader_info(self):
+        """Display current leader cache status"""
+        if self.last_known_leader:
+            print(f"\n[Leader Cache] Current: {self.last_known_leader} (failures: {self.leader_failures})")
+        else:
+            print(f"\n[Leader Cache] No cached leader (will try all servers)")
 
 
-# Rest of the client code (print_banner, print_menu, interactive_menu, main) remains the same
-# Just copy from the original client.py starting from line ~490
-
+# All the UI functions remain the same
 def print_banner():
     """Print welcome banner"""
     banner = """
     ╔══════════════════════════════════════════════════════════════╗
     ║                                                              ║
     ║        DISTRIBUTED MOVIE TICKET BOOKING SYSTEM               ║
+    ║                  with Smart Leader Caching                   ║
     ║                                                              ║
     ║          🎬 Book Your Favorite Movies Today! 🎬              ║
     ║                                                              ║
@@ -448,7 +545,8 @@ def print_menu():
     print("  3. 📋 View My Bookings")
     print("  4. ❌ Cancel Booking")
     print("  5. 🤖 Ask AI Assistant")
-    print("  6. 🚪 Logout")
+    print("  6. 🔍 Show Leader Cache Status")
+    print("  7. 🚪 Logout")
     print("="*80)
 
 
@@ -460,9 +558,10 @@ def interactive_menu():
     servers = ['localhost:50051', 'localhost:50052', 'localhost:50053']
     
     print(f"\n✓ Connected to {len(servers)} server(s)")
-    print("  Client will automatically find the leader for write operations")
+    print("  Client will automatically cache the leader for fast response")
+    print("  After failover, client adapts within 1-2 requests")
     
-    client = TicketBookingClient(servers)
+    client = SmartTicketBookingClient(servers)
     
     # Login loop
     max_attempts = 3
@@ -496,11 +595,11 @@ def interactive_menu():
         print("\n✗ Maximum login attempts exceeded. Goodbye!")
         return
     
-    # Main menu loop - same as original
+    # Main menu loop
     while True:
         try:
             print_menu()
-            choice = input("\nEnter your choice (1-6): ").strip()
+            choice = input("\nEnter your choice (1-7): ").strip()
             
             if choice == '1':
                 print("\n[Loading movies...]")
@@ -597,6 +696,9 @@ def interactive_menu():
                     client.ask_llm(query)
             
             elif choice == '6':
+                client.get_leader_info()
+            
+            elif choice == '7':
                 confirm = input("\nAre you sure you want to logout? (yes/no): ").strip().lower()
                 if confirm == 'yes':
                     client.logout()
@@ -606,7 +708,7 @@ def interactive_menu():
                     break
             
             else:
-                print("\n✗ Invalid choice. Please enter a number between 1 and 6.")
+                print("\n✗ Invalid choice. Please enter a number between 1 and 7.")
             
             input("\nPress Enter to continue...")
         
