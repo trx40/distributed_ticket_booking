@@ -1,68 +1,102 @@
+#!/usr/bin/env python3
+"""
+Fixed Client with automatic retry across all nodes
+Handles leader election and failover gracefully
+"""
+
 import grpc
 import json
 import time
 import sys
 from datetime import datetime
 
-# Import generated protobuf files
 import ticket_booking_pb2
 import ticket_booking_pb2_grpc
 
 
 class TicketBookingClient:
-    """Client for Movie Ticket Booking System"""
+    """Client with intelligent multi-node retry"""
     
     def __init__(self, server_addresses):
         """
-        Initialize client with multiple server addresses for fault tolerance
-        server_addresses: list of server addresses ['localhost:50051', 'localhost:50052']
+        Initialize client with multiple server addresses
+        server_addresses: list of all server addresses
         """
         self.server_addresses = server_addresses
-        self.current_server_idx = 0
         self.token = None
         self.username = None
         print(f"[Client] Initialized with {len(server_addresses)} servers")
+        print(f"[Client] Servers: {', '.join(server_addresses)}")
     
-    def _get_stub(self):
-        """Get gRPC stub with automatic failover"""
-        max_retries = len(self.server_addresses)
+    def _execute_with_retry(self, operation_func, max_retries=None):
+        """
+        Execute operation with automatic retry across all nodes
+        For write operations, this ensures we find the leader
+        """
+        if max_retries is None:
+            max_retries = len(self.server_addresses) * 2  # Try each server twice
+        
+        last_error = None
         
         for attempt in range(max_retries):
-            try:
-                address = self.server_addresses[self.current_server_idx]
-                channel = grpc.insecure_channel(address, options=[
-                    ('grpc.keepalive_time_ms', 10000),
-                    ('grpc.keepalive_timeout_ms', 5000),
-                ])
-                
-                # Test connection
-                grpc.channel_ready_future(channel).result(timeout=5)
-                
-                stub = ticket_booking_pb2_grpc.TicketBookingServiceStub(channel)
-                return stub, channel
-                
-            except Exception as e:
-                print(f"[Client] Failed to connect to {address}: {e}")
-                self.current_server_idx = (self.current_server_idx + 1) % len(self.server_addresses)
-                
-                if attempt < max_retries - 1:
-                    print(f"[Client] Trying next server...")
-                    time.sleep(1)
+            # Try each server
+            for address in self.server_addresses:
+                try:
+                    channel = grpc.insecure_channel(address, options=[
+                        ('grpc.keepalive_time_ms', 10000),
+                        ('grpc.keepalive_timeout_ms', 5000),
+                    ])
+                    
+                    # Test connection
+                    grpc.channel_ready_future(channel).result(timeout=3)
+                    
+                    stub = ticket_booking_pb2_grpc.TicketBookingServiceStub(channel)
+                    
+                    # Execute the operation
+                    result = operation_func(stub)
+                    channel.close()
+                    
+                    # Success!
+                    return result
+                    
+                except grpc.RpcError as e:
+                    error_msg = str(e.details()) if hasattr(e, 'details') else str(e)
+                    
+                    # If it's a "not leader" error, try next server
+                    if "Not the leader" in error_msg or "not leader" in error_msg.lower():
+                        print(f"[Client] {address} is not leader, trying next server...")
+                        last_error = error_msg
+                        continue
+                    
+                    # Other errors - try next server
+                    print(f"[Client] Error from {address}: {error_msg}")
+                    last_error = error_msg
+                    continue
+                    
+                except Exception as e:
+                    print(f"[Client] Connection failed to {address}: {e}")
+                    last_error = str(e)
+                    continue
+            
+            # If we've tried all servers and no success, wait a bit before retrying
+            if attempt < max_retries - 1:
+                print(f"[Client] Retry {attempt + 1}/{max_retries} - waiting 2 seconds...")
+                time.sleep(2)
         
-        raise Exception("All servers unavailable. Please check if the system is running.")
+        # All retries exhausted
+        raise Exception(f"All servers unavailable after {max_retries} attempts. Last error: {last_error}")
     
     def login(self, username, password):
         """Login to the system"""
-        try:
-            stub, channel = self._get_stub()
-            
+        def _login(stub):
             request = ticket_booking_pb2.LoginRequest(
                 username=username,
                 password=password
             )
-            
-            response = stub.Login(request)
-            channel.close()
+            return stub.Login(request, timeout=5.0)
+        
+        try:
+            response = self._execute_with_retry(_login, max_retries=len(self.server_addresses))
             
             if response.status == "success":
                 self.token = response.token
@@ -83,13 +117,12 @@ class TicketBookingClient:
             print("Not logged in")
             return
         
-        try:
-            stub, channel = self._get_stub()
-            
+        def _logout(stub):
             request = ticket_booking_pb2.LogoutRequest(token=self.token)
-            response = stub.Logout(request)
-            channel.close()
-            
+            return stub.Logout(request, timeout=5.0)
+        
+        try:
+            response = self._execute_with_retry(_logout)
             print(f"\n✓ {response.message}")
             self.token = None
             self.username = None
@@ -105,17 +138,16 @@ class TicketBookingClient:
             print("\n✗ Please login first")
             return []
         
-        try:
-            stub, channel = self._get_stub()
-            
+        def _get_movies(stub):
             request = ticket_booking_pb2.GetRequest(
                 token=self.token,
                 type="movie_list",
                 params=""
             )
-            
-            response = stub.Get(request)
-            channel.close()
+            return stub.Get(request, timeout=5.0)
+        
+        try:
+            response = self._execute_with_retry(_get_movies)
             
             if response.status == "success":
                 movies = []
@@ -137,18 +169,17 @@ class TicketBookingClient:
             print("\n✗ Please login first")
             return []
         
-        try:
-            stub, channel = self._get_stub()
-            
+        def _get_seats(stub):
             params = json.dumps({'movie_id': movie_id})
             request = ticket_booking_pb2.GetRequest(
                 token=self.token,
                 type="available_seats",
                 params=params
             )
-            
-            response = stub.Get(request)
-            channel.close()
+            return stub.Get(request, timeout=5.0)
+        
+        try:
+            response = self._execute_with_retry(_get_seats)
             
             if response.status == "success" and response.items:
                 data = json.loads(response.items[0].data)
@@ -162,14 +193,12 @@ class TicketBookingClient:
             return []
     
     def book_ticket(self, movie_id, seats):
-        """Book movie tickets"""
+        """Book movie tickets - with automatic leader finding"""
         if not self.token:
             print("\n✗ Please login first")
             return None
         
-        try:
-            stub, channel = self._get_stub()
-            
+        def _book(stub):
             data = json.dumps({
                 'movie_id': movie_id,
                 'seats': seats
@@ -181,9 +210,11 @@ class TicketBookingClient:
                 data=data
             )
             
-            print("\n[Processing booking...]")
-            response = stub.Post(request, timeout=60.0)
-            channel.close()
+            return stub.Post(request, timeout=15.0)
+        
+        try:
+            print("\n[Processing booking - finding leader...]")
+            response = self._execute_with_retry(_book, max_retries=len(self.server_addresses) * 3)
             
             if response.status == "success":
                 result = json.loads(response.message)
@@ -204,6 +235,7 @@ class TicketBookingClient:
         
         except Exception as e:
             print(f"\n✗ Booking error: {e}")
+            print("This might indicate no leader is available. Please wait for leader election to complete.")
             return None
     
     def cancel_booking(self, booking_id):
@@ -212,20 +244,18 @@ class TicketBookingClient:
             print("\n✗ Please login first")
             return False
         
-        try:
-            stub, channel = self._get_stub()
-            
+        def _cancel(stub):
             data = json.dumps({'booking_id': booking_id})
-            
             request = ticket_booking_pb2.PostRequest(
                 token=self.token,
                 type="cancel_booking",
                 data=data
             )
-            
+            return stub.Post(request, timeout=10.0)
+        
+        try:
             print("\n[Processing cancellation...]")
-            response = stub.Post(request)
-            channel.close()
+            response = self._execute_with_retry(_cancel)
             
             if response.status == "success":
                 result = json.loads(response.message)
@@ -250,23 +280,21 @@ class TicketBookingClient:
             print("\n✗ Please login first")
             return False
         
-        try:
-            stub, channel = self._get_stub()
-            
+        def _payment(stub):
             data = json.dumps({
                 'booking_id': booking_id,
                 'payment_method': payment_method
             })
-            
             request = ticket_booking_pb2.PostRequest(
                 token=self.token,
                 type="payment",
                 data=data
             )
-            
+            return stub.Post(request, timeout=10.0)
+        
+        try:
             print("\n[Processing payment...]")
-            response = stub.Post(request)
-            channel.close()
+            response = self._execute_with_retry(_payment)
             
             if response.status == "success":
                 result = json.loads(response.message)
@@ -275,7 +303,6 @@ class TicketBookingClient:
                 print(f"{'='*60}")
                 print(f"  Payment ID: {result.get('payment_id')}")
                 print(f"  Booking ID: {booking_id}")
-                print(f"  Amount: Processed")
                 print(f"  Method: {payment_method}")
                 print(f"{'='*60}\n")
                 return True
@@ -293,17 +320,16 @@ class TicketBookingClient:
             print("\n✗ Please login first")
             return []
         
-        try:
-            stub, channel = self._get_stub()
-            
+        def _get_bookings(stub):
             request = ticket_booking_pb2.GetRequest(
                 token=self.token,
                 type="my_bookings",
                 params=""
             )
-            
-            response = stub.Get(request)
-            channel.close()
+            return stub.Get(request, timeout=5.0)
+        
+        try:
+            response = self._execute_with_retry(_get_bookings)
             
             if response.status == "success":
                 bookings = []
@@ -325,18 +351,17 @@ class TicketBookingClient:
             print("\n✗ Please login first")
             return
         
-        try:
-            stub, channel = self._get_stub()
-            
+        def _ask_llm(stub):
             request = ticket_booking_pb2.LLMRequest(
                 token=self.token,
                 query=query,
                 context="Customer support query"
             )
-            
+            return stub.GetLLMAssistance(request, timeout=30.0)
+        
+        try:
             print("\n[Consulting AI assistant...]")
-            response = stub.GetLLMAssistance(request, timeout=60.0)
-            channel.close()
+            response = self._execute_with_retry(_ask_llm)
             
             if response.status == "success":
                 print(f"\n{'='*60}")
@@ -350,7 +375,6 @@ class TicketBookingClient:
         
         except Exception as e:
             print(f"\n✗ LLM error: {e}")
-            print("The AI assistant may be unavailable. Please try again.")
     
     def display_movies(self, movies):
         """Display movies in a formatted way"""
@@ -397,6 +421,9 @@ class TicketBookingClient:
         print()
 
 
+# Rest of the client code (print_banner, print_menu, interactive_menu, main) remains the same
+# Just copy from the original client.py starting from line ~490
+
 def print_banner():
     """Print welcome banner"""
     banner = """
@@ -429,21 +456,15 @@ def interactive_menu():
     """Interactive command-line menu"""
     print_banner()
     
-    # Get server addresses
-    print("\n📡 Server Configuration")
-    print("-" * 60)
-    servers_input = input("Enter server addresses (comma-separated)\n[Default: localhost:50051,localhost:50052,localhost:50053]: ").strip()
+    # Always use all three servers
+    servers = ['localhost:50051', 'localhost:50052', 'localhost:50053']
     
-    if not servers_input:
-        servers = ['localhost:50051', 'localhost:50052', 'localhost:50053']
-    else:
-        servers = [s.strip() for s in servers_input.split(',')]
-    
-    print(f"\n✓ Configured with {len(servers)} server(s)")
+    print(f"\n✓ Connected to {len(servers)} server(s)")
+    print("  Client will automatically find the leader for write operations")
     
     client = TicketBookingClient(servers)
     
-    # Login
+    # Login loop
     max_attempts = 3
     attempts = 0
     
@@ -475,20 +496,18 @@ def interactive_menu():
         print("\n✗ Maximum login attempts exceeded. Goodbye!")
         return
     
-    # Main menu loop
+    # Main menu loop - same as original
     while True:
         try:
             print_menu()
             choice = input("\nEnter your choice (1-6): ").strip()
             
             if choice == '1':
-                # View Movies
                 print("\n[Loading movies...]")
                 movies = client.get_movies()
                 client.display_movies(movies)
             
             elif choice == '2':
-                # Book Tickets
                 print("\n[Loading movies...]")
                 movies = client.get_movies()
                 
@@ -502,12 +521,10 @@ def interactive_menu():
                 if movie_id.lower() == 'back':
                     continue
                 
-                # Check if movie exists
                 if not any(m['id'] == movie_id for m in movies):
                     print(f"\n✗ Invalid movie ID: {movie_id}")
                     continue
                 
-                # Get available seats
                 print(f"\n[Loading available seats for {movie_id}...]")
                 seats = client.get_available_seats(movie_id)
                 
@@ -516,7 +533,6 @@ def interactive_menu():
                     continue
                 
                 print(f"\nAvailable seats ({len(seats)} total):")
-                # Show first 30 seats
                 if len(seats) > 30:
                     print(f"  {', '.join(map(str, seats[:30]))}... (and {len(seats)-30} more)")
                 else:
@@ -527,17 +543,14 @@ def interactive_menu():
                 try:
                     selected_seats = [int(s.strip()) for s in seat_input.split(',')]
                     
-                    # Validate seats
                     invalid_seats = [s for s in selected_seats if s not in seats]
                     if invalid_seats:
                         print(f"\n✗ Invalid or unavailable seats: {', '.join(map(str, invalid_seats))}")
                         continue
                     
-                    # Book tickets
                     result = client.book_ticket(movie_id, selected_seats)
                     
                     if result:
-                        # Optionally process payment
                         process_pay = input("\nProcess payment now? (y/n): ").strip().lower()
                         if process_pay == 'y':
                             payment_method = input("Payment method (card/upi/wallet) [card]: ").strip() or 'card'
@@ -547,13 +560,11 @@ def interactive_menu():
                     print("\n✗ Invalid seat numbers. Please enter numbers separated by commas.")
             
             elif choice == '3':
-                # View My Bookings
                 print("\n[Loading your bookings...]")
                 bookings = client.get_my_bookings()
                 client.display_bookings(bookings)
             
             elif choice == '4':
-                # Cancel Booking
                 print("\n[Loading your bookings...]")
                 bookings = client.get_my_bookings()
                 
@@ -567,13 +578,11 @@ def interactive_menu():
                 if booking_id.lower() == 'back':
                     continue
                 
-                # Confirm cancellation
                 confirm = input(f"\nAre you sure you want to cancel booking {booking_id}? (yes/no): ").strip().lower()
                 if confirm == 'yes':
                     client.cancel_booking(booking_id)
             
             elif choice == '5':
-                # Ask AI Assistant
                 print("\n" + "="*80)
                 print("AI ASSISTANT".center(80))
                 print("="*80)
@@ -581,7 +590,6 @@ def interactive_menu():
                 print("  • How do I book tickets?")
                 print("  • How do I cancel my booking?")
                 print("  • What payment methods do you accept?")
-                print("  • What movies are available?")
                 print()
                 
                 query = input("Your question (or 'back' to return): ").strip()
@@ -589,7 +597,6 @@ def interactive_menu():
                     client.ask_llm(query)
             
             elif choice == '6':
-                # Logout
                 confirm = input("\nAre you sure you want to logout? (yes/no): ").strip().lower()
                 if confirm == 'yes':
                     client.logout()
@@ -601,7 +608,6 @@ def interactive_menu():
             else:
                 print("\n✗ Invalid choice. Please enter a number between 1 and 6.")
             
-            # Pause before showing menu again
             input("\nPress Enter to continue...")
         
         except KeyboardInterrupt:
@@ -611,7 +617,6 @@ def interactive_menu():
             break
         except Exception as e:
             print(f"\n✗ An error occurred: {e}")
-            print("Please try again or contact support.")
 
 
 def main():

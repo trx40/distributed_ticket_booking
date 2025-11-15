@@ -1,2 +1,5 @@
 /venv
 *pb2*.py
+backup_before_fixes
+backup_before_crash_fix
+*.log

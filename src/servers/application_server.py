@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Application Server with Raft Consensus"""
+"""Application Server with Raft Consensus - FIXED VERSION"""
 
 import grpc
 import json
@@ -14,7 +14,6 @@ sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1)
 sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1)
 
 print(f"[DEBUG] Application server starting...", flush=True)
-print(f"[DEBUG] Python path: {sys.path}", flush=True)
 
 # Add paths for imports
 sys.path.insert(0, os.path.dirname(__file__))
@@ -22,30 +21,25 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../raft'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../utils'))
 
-print(f"[DEBUG] Importing protobuf modules...", flush=True)
-
 # Import generated protobuf files
 import ticket_booking_pb2
 import ticket_booking_pb2_grpc
 import llm_service_pb2
 import llm_service_pb2_grpc
 
-print(f"[DEBUG] Importing custom modules...", flush=True)
-
 # Import custom modules
 from auth import AuthManager
 from raft_node import RaftNode
 
-print(f"[DEBUG] All imports successful!", flush=True)
-
 class ApplicationServer(ticket_booking_pb2_grpc.TicketBookingServiceServicer,
                        ticket_booking_pb2_grpc.InternalServiceServicer):
     
-    def __init__(self, node_id, port, raft_port, peers, llm_server_address):
+    def __init__(self, node_id, port, raft_port, peers, peer_app_ports, llm_server_address):
         self.node_id = node_id
         self.port = port
         self.raft_port = raft_port
         self.llm_server_address = llm_server_address
+        self.peer_app_ports = peer_app_ports  # {node_id: app_port}
         
         print(f"[AppServer-{node_id}] Initializing...", flush=True)
         
@@ -57,17 +51,13 @@ class ApplicationServer(ticket_booking_pb2_grpc.TicketBookingServiceServicer,
         self.raft_node = RaftNode(node_id, peers, raft_port)
         print(f"[AppServer-{node_id}] Raft node created", flush=True)
         
-        # Start Raft node directly (not in separate thread)
+        # Start Raft node
         self.raft_node.start()
         print(f"[AppServer-{node_id}] Raft node started", flush=True)
         
         print(f"[AppServer-{node_id}] Initialized on port {port}", flush=True)
         print(f"[AppServer-{node_id}] Raft node on port {raft_port}", flush=True)
         print(f"[AppServer-{node_id}] LLM server: {llm_server_address}", flush=True)
-    
-    # ========================================================================
-    # Client-facing RPC Methods
-    # ========================================================================
     
     def Login(self, request, context):
         """Authenticate user and return session token"""
@@ -91,7 +81,6 @@ class ApplicationServer(ticket_booking_pb2_grpc.TicketBookingServiceServicer,
     def Logout(self, request, context):
         """End user session"""
         print(f"[AppServer-{self.node_id}] Logout request")
-        
         self.auth_manager.logout(request.token)
         
         return ticket_booking_pb2.StatusResponse(
@@ -100,7 +89,7 @@ class ApplicationServer(ticket_booking_pb2_grpc.TicketBookingServiceServicer,
         )
     
     def Post(self, request, context):
-        """Handle POST operations (book, cancel, payment)"""
+        """Handle POST operations with automatic leader forwarding"""
         print(f"[AppServer-{self.node_id}] POST request: {request.type}")
         
         # Validate token
@@ -111,6 +100,12 @@ class ApplicationServer(ticket_booking_pb2_grpc.TicketBookingServiceServicer,
                 message="Invalid or expired token"
             )
         
+        # If not leader, forward to leader
+        if not self.raft_node.is_leader():
+            print(f"[AppServer-{self.node_id}] Not leader, attempting to forward request")
+            return self._forward_to_leader(request, username)
+        
+        # Process as leader
         try:
             data = json.loads(request.data)
             data['username'] = username
@@ -157,13 +152,46 @@ class ApplicationServer(ticket_booking_pb2_grpc.TicketBookingServiceServicer,
         
         except Exception as e:
             print(f"[AppServer-{self.node_id}] POST error: {e}")
+            import traceback
+            traceback.print_exc()
             return ticket_booking_pb2.StatusResponse(
                 status="error",
                 message=str(e)
             )
     
+    def _forward_to_leader(self, request, username):
+        """Forward write request to leader"""
+        # Try each peer to find the leader
+        for peer_id, app_port in self.peer_app_ports.items():
+            if peer_id == self.node_id:
+                continue
+            
+            try:
+                print(f"[AppServer-{self.node_id}] Trying to forward to {peer_id} at localhost:{app_port}")
+                channel = grpc.insecure_channel(f'localhost:{app_port}')
+                stub = ticket_booking_pb2_grpc.TicketBookingServiceStub(channel)
+                
+                # Forward the request
+                response = stub.Post(request, timeout=10.0)
+                channel.close()
+                
+                # If we get a success or a legitimate error (not "not leader"), return it
+                if response.status == "success" or "Not the leader" not in response.message:
+                    print(f"[AppServer-{self.node_id}] Successfully forwarded to {peer_id}")
+                    return response
+                
+            except Exception as e:
+                print(f"[AppServer-{self.node_id}] Failed to forward to {peer_id}: {e}")
+                continue
+        
+        # No leader found
+        return ticket_booking_pb2.StatusResponse(
+            status="error",
+            message="No leader available. System is electing a new leader. Please try again in a few seconds."
+        )
+    
     def Get(self, request, context):
-        """Handle GET operations (query data)"""
+        """Handle GET operations - can be served by any node"""
         print(f"[AppServer-{self.node_id}] GET request: {request.type}")
         
         # Validate token
@@ -237,11 +265,9 @@ class ApplicationServer(ticket_booking_pb2_grpc.TicketBookingServiceServicer,
             )
         
         try:
-            # Connect to LLM server
             channel = grpc.insecure_channel(self.llm_server_address)
             stub = llm_service_pb2_grpc.LLMServiceStub(channel)
             
-            # Add context about current state
             context_info = self._build_context(username)
             full_context = f"{request.context}\n\nCurrent System State:\n{context_info}"
             
@@ -266,18 +292,12 @@ class ApplicationServer(ticket_booking_pb2_grpc.TicketBookingServiceServicer,
                 answer=f"LLM service unavailable: {str(e)}"
             )
     
-    # ========================================================================
-    # Internal RPC Methods (Server-to-Server)
-    # ========================================================================
-    
     def ProcessBusinessRequest(self, request, context):
         """Handle internal business logic requests"""
         print(f"[AppServer-{self.node_id}] Internal business request: {request.request_id}")
         
         try:
             payload = json.loads(request.payload)
-            # Process business logic here
-            
             return ticket_booking_pb2.BusinessResponse(
                 status="success",
                 result=json.dumps({"processed": True})
@@ -294,7 +314,6 @@ class ApplicationServer(ticket_booking_pb2_grpc.TicketBookingServiceServicer,
         
         try:
             current_state = self.raft_node.state_machine.get_state()
-            
             return ticket_booking_pb2.StateResponse(
                 status="success",
                 data=json.dumps(current_state)
@@ -305,42 +324,20 @@ class ApplicationServer(ticket_booking_pb2_grpc.TicketBookingServiceServicer,
                 data=str(e)
             )
     
-    # ========================================================================
-    # Helper Methods
-    # ========================================================================
-    
     def _submit_to_raft(self, command):
-        """Submit command to Raft consensus"""
-        # Check if this node is leader
+        """Submit command to Raft consensus - FIXED VERSION"""
         if not self.raft_node.is_leader():
-            # Wait a bit for leader election to complete
-            max_wait = 3.0
-            start = time.time()
-            while time.time() - start < max_wait:
-                if self.raft_node.is_leader():
-                    break
-                time.sleep(0.5)
-            
-            if not self.raft_node.is_leader():
-                return {
-                    'status': 'error',
-                    'message': 'Not the leader. This server cannot process writes. Please try another server.'
-                }
+            return {
+                'status': 'error',
+                'message': 'Not the leader. Please retry - request will be forwarded.'
+            }
         
-        # Submit command
         command_json = json.dumps(command)
         print(f"[AppServer-{self.node_id}] Submitting command to Raft: {command.get('operation')}")
         
+        # Submit and wait for result
         result = self.raft_node.submit_command(command_json)
-        
-        if result['status'] == 'success':
-            # Command committed, get result from state machine
-            print(f"[AppServer-{self.node_id}] Command committed, applying to state machine")
-            state_result = self.raft_node.state_machine.apply_command(command_json)
-            return state_result
-        else:
-            print(f"[AppServer-{self.node_id}] Command failed: {result.get('message')}")
-            return result
+        return result
     
     def _build_context(self, username):
         """Build context information for LLM"""
@@ -360,7 +357,6 @@ class ApplicationServer(ticket_booking_pb2_grpc.TicketBookingServiceServicer,
         """Start the application server"""
         server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
         
-        # Add servicers
         ticket_booking_pb2_grpc.add_TicketBookingServiceServicer_to_server(self, server)
         ticket_booking_pb2_grpc.add_InternalServiceServicer_to_server(self, server)
         
@@ -370,10 +366,8 @@ class ApplicationServer(ticket_booking_pb2_grpc.TicketBookingServiceServicer,
         print(f"[AppServer-{self.node_id}] Server started on port {self.port}")
         print(f"[AppServer-{self.node_id}] Waiting for Raft initialization...")
         
-        # Wait for Raft to stabilize
         time.sleep(5)
         
-        # Display status
         info = self.raft_node.get_leader_info()
         print(f"[AppServer-{self.node_id}] Raft Status: {info['state']} (Term: {info['term']})")
         
@@ -397,7 +391,7 @@ def main():
     
     args = parser.parse_args()
     
-    # Parse peers
+    # Parse peers for Raft
     peers = {}
     for peer_info in args.peers.split(','):
         parts = peer_info.split(':')
@@ -405,12 +399,19 @@ def main():
             peer_id, host, port = parts
             peers[peer_id] = f"{host}:{port}"
     
-    # Create and start server
+    # Parse peer application ports for forwarding
+    peer_app_ports = {
+        'node1': 50051,
+        'node2': 50052,
+        'node3': 50053
+    }
+    
     server = ApplicationServer(
         node_id=args.node_id,
         port=args.port,
         raft_port=args.raft_port,
         peers=peers,
+        peer_app_ports=peer_app_ports,
         llm_server_address=args.llm_server
     )
     

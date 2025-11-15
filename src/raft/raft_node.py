@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+"""
+Ultra-Robust Raft Implementation
+Key principle: NEVER hold locks during I/O operations
+"""
+
 import grpc
 import time
 import random
@@ -7,14 +13,12 @@ import sys
 import os
 from concurrent import futures
 from enum import Enum
+from queue import Queue, Empty
 
-# Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import raft_pb2
 import raft_pb2_grpc
-
-# Import state machine from same directory
 from state_machine import StateMachine
 
 class NodeState(Enum):
@@ -22,407 +26,561 @@ class NodeState(Enum):
     CANDIDATE = 2
     LEADER = 3
 
+
 class RaftNode(raft_pb2_grpc.RaftServiceServicer):
     def __init__(self, node_id, peers, port):
         self.node_id = node_id
-        self.peers = peers  # {node_id: address}
+        self.peers = peers
         self.port = port
         
-        # Raft state
-        self.state = NodeState.FOLLOWER
+        # Raft persistent state
         self.current_term = 0
         self.voted_for = None
-        self.log = []  # List of log entries with results
+        self.log = []
+        
+        # Raft volatile state
         self.commit_index = -1
         self.last_applied = -1
+        self.state = NodeState.FOLLOWER
         
-        # Leader state
+        # Leader volatile state
         self.next_index = {}
         self.match_index = {}
         
         # Timing
-        self.last_heartbeat = time.time()
+        self.last_heartbeat_time = time.time()
         self.election_timeout = random.uniform(5.0, 10.0)
         self.heartbeat_interval = 1.0
         
         # State machine
         self.state_machine = StateMachine()
         
-        # Threading - use RLock to allow reentrant locking
-        self.lock = threading.RLock()
+        # Simple lock - only for updating state variables
+        self.lock = threading.Lock()
+        
+        # Command queue for clients
+        self.pending_commands = Queue()
+        
+        # Control flag
         self.running = True
         
-        # Delay starting background threads
-        self.election_thread = threading.Thread(target=self._election_timer, daemon=True)
-        self.heartbeat_thread = threading.Thread(target=self._heartbeat_timer, daemon=True)
-        
-        print(f"[{self.node_id}] Initialized as FOLLOWER", flush=True)
+        print(f"[{self.node_id}] Raft node initialized", flush=True)
     
     def start(self):
-        """Start Raft node - non-blocking version for use in daemon thread"""
-        # Start gRPC server first
-        self.server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+        """Start the Raft node"""
+        # Start gRPC server
+        self.server = grpc.server(
+            futures.ThreadPoolExecutor(max_workers=20),
+            options=[
+                ('grpc.max_send_message_length', 50 * 1024 * 1024),
+                ('grpc.max_receive_message_length', 50 * 1024 * 1024),
+                ('grpc.so_reuseport', 1),
+                ('grpc.keepalive_time_ms', 10000),
+                ('grpc.keepalive_timeout_ms', 5000),
+            ]
+        )
         raft_pb2_grpc.add_RaftServiceServicer_to_server(self, self.server)
         self.server.add_insecure_port(f'[::]:{self.port}')
         self.server.start()
-        print(f"[{self.node_id}] Raft gRPC server started on port {self.port}", flush=True)
         
-        # Give the server a moment to start accepting connections
+        print(f"[{self.node_id}] gRPC server started on port {self.port}", flush=True)
+        
+        # Start background threads
+        threading.Thread(target=self._election_loop, daemon=True, name=f"{self.node_id}-election").start()
+        threading.Thread(target=self._heartbeat_loop, daemon=True, name=f"{self.node_id}-heartbeat").start()
+        threading.Thread(target=self._apply_loop, daemon=True, name=f"{self.node_id}-apply").start()
+        
+        print(f"[{self.node_id}] Background threads started", flush=True)
         time.sleep(0.5)
-        
-        # NOW start the background threads
-        self.election_thread.start()
-        self.heartbeat_thread.start()
-        print(f"[{self.node_id}] Raft background threads started", flush=True)
     
     def stop(self):
-        """Stop the Raft node"""
+        """Stop the node"""
         self.running = False
         if hasattr(self, 'server'):
-            self.server.stop(0)
+            self.server.stop(grace=0)
     
-    def _election_timer(self):
-        # Wait before starting election monitoring to let server initialize
-        time.sleep(2.0)
-        print(f"[{self.node_id}] Election timer started", flush=True)
+    # ==================== BACKGROUND LOOPS ====================
+    
+    def _election_loop(self):
+        """Monitor election timeout and trigger elections"""
+        time.sleep(2.0)  # Initial delay
+        print(f"[{self.node_id}] Election loop started", flush=True)
         
         while self.running:
-            time.sleep(0.5)
-            
-            acquired = self.lock.acquire(timeout=1.0)
-            if not acquired:
-                continue
-            
             try:
-                if self.state == NodeState.LEADER:
-                    continue
+                time.sleep(0.5)
                 
-                elapsed = time.time() - self.last_heartbeat
-                if elapsed > self.election_timeout:
-                    print(f"[{self.node_id}] Election timeout, starting election", flush=True)
-                    self._start_election()
-            finally:
-                self.lock.release()
+                # Read state without holding lock for long
+                with self.lock:
+                    current_state = self.state
+                    last_hb = self.last_heartbeat_time
+                    timeout = self.election_timeout
+                
+                # Check timeout only if not leader
+                if current_state != NodeState.LEADER:
+                    if time.time() - last_hb > timeout:
+                        # Trigger election WITHOUT holding lock
+                        self._start_election()
+                        
+            except Exception as e:
+                print(f"[{self.node_id}] Election loop error: {e}", flush=True)
+                time.sleep(1)
+    
+    def _heartbeat_loop(self):
+        """Send heartbeats if leader"""
+        time.sleep(2.0)
+        print(f"[{self.node_id}] Heartbeat loop started", flush=True)
+        
+        while self.running:
+            try:
+                time.sleep(self.heartbeat_interval)
+                
+                # Check if leader without holding lock
+                with self.lock:
+                    is_leader = (self.state == NodeState.LEADER)
+                
+                if is_leader:
+                    # Send heartbeats WITHOUT holding lock
+                    self._send_heartbeats()
+                    
+            except Exception as e:
+                print(f"[{self.node_id}] Heartbeat loop error: {e}", flush=True)
+                time.sleep(1)
+    
+    def _apply_loop(self):
+        """Apply committed entries to state machine"""
+        time.sleep(2.0)
+        print(f"[{self.node_id}] Apply loop started", flush=True)
+        
+        while self.running:
+            try:
+                time.sleep(0.1)
+                
+                with self.lock:
+                    # Check if there are entries to apply
+                    if self.last_applied < self.commit_index:
+                        self.last_applied += 1
+                        idx = self.last_applied
+                        
+                        # Get entry to apply
+                        if idx < len(self.log):
+                            entry = self.log[idx]
+                            command = entry['command']
+                        else:
+                            continue
+                
+                # Apply to state machine WITHOUT holding lock
+                try:
+                    result = self.state_machine.apply_command(command)
+                    
+                    # Store result
+                    with self.lock:
+                        if idx < len(self.log):
+                            self.log[idx]['result'] = result
+                    
+                    print(f"[{self.node_id}] Applied entry {idx}", flush=True)
+                except Exception as e:
+                    print(f"[{self.node_id}] Error applying entry {idx}: {e}", flush=True)
+                    
+            except Exception as e:
+                print(f"[{self.node_id}] Apply loop error: {e}", flush=True)
+                time.sleep(1)
+    
+    # ==================== ELECTION LOGIC ====================
     
     def _start_election(self):
-        self.state = NodeState.CANDIDATE
-        self.current_term += 1
-        self.voted_for = self.node_id
-        self.last_heartbeat = time.time()
-        self.election_timeout = random.uniform(5.0, 10.0)
-        
-        term = self.current_term
-        last_log_index = len(self.log) - 1
-        last_log_term = self.log[-1]['term'] if self.log else 0
-        
-        print(f"[{self.node_id}] Starting election for term {term}", flush=True)
-        
-        votes = 1
-        peers_to_contact = [(pid, paddr) for pid, paddr in self.peers.items() if pid != self.node_id]
-        
-        self.lock.release()
-        
+        """Start election - NO LOCKS HELD DURING RPC"""
         try:
-            for peer_id, peer_addr in peers_to_contact:
+            # Transition to candidate
+            with self.lock:
+                self.state = NodeState.CANDIDATE
+                self.current_term += 1
+                self.voted_for = self.node_id
+                self.last_heartbeat_time = time.time()
+                self.election_timeout = random.uniform(5.0, 10.0)
+                
+                term = self.current_term
+                last_idx = len(self.log) - 1
+                last_term = self.log[-1]['term'] if self.log else 0
+            
+            print(f"[{self.node_id}] Starting election for term {term}", flush=True)
+            
+            # Vote for self
+            votes = 1
+            votes_lock = threading.Lock()
+            
+            # Request votes from all peers IN PARALLEL
+            def request_vote_worker(peer_id, peer_addr):
+                """Worker thread to request vote from one peer"""
                 try:
-                    print(f"[{self.node_id}] Requesting vote from {peer_id} at {peer_addr}", flush=True)
-                    channel = grpc.insecure_channel(peer_addr)
+                    channel = grpc.insecure_channel(
+                        peer_addr,
+                        options=[
+                            ('grpc.max_connection_idle_ms', 5000),
+                        ]
+                    )
                     stub = raft_pb2_grpc.RaftServiceStub(channel)
                     
                     request = raft_pb2.RequestVoteRequest()
                     setattr(request, 'from', self.node_id)
                     request.to = peer_id
                     request.term = term
-                    request.last_log_index = last_log_index
-                    request.last_log_term = last_log_term
+                    request.last_log_index = last_idx
+                    request.last_log_term = last_term
                     
+                    # Make RPC with timeout
                     response = stub.RequestVote(request, timeout=2.0)
                     
-                    if not self.lock.acquire(timeout=1.0):
-                        channel.close()
-                        return
-                    
-                    try:
-                        if response.term > self.current_term:
-                            print(f"[{self.node_id}] Higher term {response.term} from {peer_id}, stepping down", flush=True)
-                            self._step_down(response.term)
-                            channel.close()
-                            return
-                        
-                        if response.vote_granted:
+                    # Process response
+                    if response.vote_granted:
+                        with votes_lock:
+                            nonlocal votes
                             votes += 1
-                            print(f"[{self.node_id}] Received vote from {peer_id} (total: {votes})", flush=True)
-                    finally:
-                        self.lock.release()
+                        print(f"[{self.node_id}] Got vote from {peer_id}", flush=True)
+                    
+                    # Check for higher term
+                    if response.term > term:
+                        with self.lock:
+                            if response.term > self.current_term:
+                                self._step_down_unsafe(response.term)
                     
                     channel.close()
+                    
+                except grpc.RpcError as e:
+                    # Node unavailable - this is NORMAL during failures
+                    pass
                 except Exception as e:
-                    print(f"[{self.node_id}] Failed to request vote from {peer_id}: {e}", flush=True)
+                    print(f"[{self.node_id}] Vote request error from {peer_id}: {e}", flush=True)
             
-            if not self.lock.acquire(timeout=1.0):
-                return
+            # Launch all vote requests in parallel
+            threads = []
+            for peer_id, peer_addr in self.peers.items():
+                if peer_id != self.node_id:
+                    t = threading.Thread(
+                        target=request_vote_worker,
+                        args=(peer_id, peer_addr),
+                        daemon=True
+                    )
+                    t.start()
+                    threads.append(t)
             
-            try:
-                majority = (len(self.peers) + 1) // 2 + 1
-                print(f"[{self.node_id}] Election complete: {votes} votes, need {majority} for majority", flush=True)
-                
+            # Wait for all threads with timeout
+            for t in threads:
+                t.join(timeout=3.0)
+            
+            # Check election result
+            majority = (len(self.peers) // 2) + 1
+            
+            print(f"[{self.node_id}] Election result: {votes}/{len(self.peers)} votes (need {majority})", flush=True)
+            
+            with self.lock:
+                # Only become leader if still candidate and won
                 if self.state == NodeState.CANDIDATE and votes >= majority:
-                    self._become_leader()
-            finally:
-                pass
-        
+                    self._become_leader_unsafe()
+                    
         except Exception as e:
             print(f"[{self.node_id}] Election error: {e}", flush=True)
-            try:
-                self.lock.acquire(timeout=0.5)
-            except:
-                pass
+            import traceback
+            traceback.print_exc()
     
-    def _become_leader(self):
+    def _become_leader_unsafe(self):
+        """Become leader - MUST BE CALLED WITH LOCK HELD"""
         print(f"[{self.node_id}] Became LEADER for term {self.current_term}", flush=True)
         self.state = NodeState.LEADER
         
+        # Initialize leader state
         for peer_id in self.peers:
             if peer_id != self.node_id:
                 self.next_index[peer_id] = len(self.log)
                 self.match_index[peer_id] = -1
     
-    def _step_down(self, term):
-        print(f"[{self.node_id}] Stepping down to FOLLOWER (term {term})", flush=True)
-        self.state = NodeState.FOLLOWER
-        self.current_term = term
-        self.voted_for = None
+    def _step_down_unsafe(self, term):
+        """Step down to follower - MUST BE CALLED WITH LOCK HELD"""
+        if term > self.current_term:
+            print(f"[{self.node_id}] Stepping down to term {term}", flush=True)
+            self.current_term = term
+            self.voted_for = None
+            self.state = NodeState.FOLLOWER
+            self.last_heartbeat_time = time.time()
     
-    def _heartbeat_timer(self):
-        time.sleep(2.0)
-        print(f"[{self.node_id}] Heartbeat timer started", flush=True)
-        
-        while self.running:
-            time.sleep(self.heartbeat_interval)
-            
-            acquired = self.lock.acquire(timeout=1.0)
-            if not acquired:
-                continue
-            
-            try:
-                if self.state == NodeState.LEADER:
-                    self._send_heartbeats()
-            finally:
-                self.lock.release()
+    # ==================== HEARTBEAT LOGIC ====================
     
     def _send_heartbeats(self):
-        for peer_id, peer_addr in self.peers.items():
-            if peer_id == self.node_id:
-                continue
-            
+        """Send heartbeats to all followers - NO LOCKS HELD DURING RPC"""
+        # Get current state
+        with self.lock:
+            if self.state != NodeState.LEADER:
+                return
+            term = self.current_term
+            commit_idx = self.commit_index
+        
+        # Send to all peers in parallel
+        def heartbeat_worker(peer_id, peer_addr):
+            """Send AppendEntries to one peer"""
             try:
-                channel = grpc.insecure_channel(peer_addr)
+                # Get data for this peer
+                with self.lock:
+                    if self.state != NodeState.LEADER:
+                        return
+                    
+                    next_idx = self.next_index.get(peer_id, len(self.log))
+                    prev_idx = next_idx - 1
+                    prev_term = self.log[prev_idx]['term'] if prev_idx >= 0 else 0
+                    
+                    # Get entries to send
+                    entries_to_send = []
+                    if next_idx < len(self.log):
+                        entries_to_send = self.log[next_idx:]
+                
+                # Make RPC WITHOUT lock
+                channel = grpc.insecure_channel(
+                    peer_addr,
+                    options=[('grpc.max_connection_idle_ms', 5000)]
+                )
                 stub = raft_pb2_grpc.RaftServiceStub(channel)
-                
-                next_idx = self.next_index.get(peer_id, len(self.log))
-                prev_index = next_idx - 1
-                prev_term = self.log[prev_index]['term'] if prev_index >= 0 else 0
-                
-                entries = []
-                if next_idx < len(self.log):
-                    entries = [raft_pb2.LogEntry(
-                        term=entry['term'],
-                        command=entry['command']
-                    ) for entry in self.log[next_idx:]]
                 
                 request = raft_pb2.AppendEntriesRequest()
                 setattr(request, 'from', self.node_id)
                 request.to = peer_id
-                request.term = self.current_term
-                request.prev_index = prev_index
+                request.term = term
+                request.prev_index = prev_idx
                 request.prev_term = prev_term
-                request.commit_index = self.commit_index
-                request.entries.extend(entries)
+                request.commit_index = commit_idx
                 
-                response = stub.AppendEntries(request, timeout=2.0)
+                # Add entries
+                for entry in entries_to_send:
+                    log_entry = raft_pb2.LogEntry()
+                    log_entry.term = entry['term']
+                    log_entry.command = entry['command']
+                    request.entries.append(log_entry)
                 
+                response = stub.AppendEntries(request, timeout=1.5)
+                
+                # Process response
                 with self.lock:
+                    if self.state != NodeState.LEADER:
+                        channel.close()
+                        return
+                    
                     if response.term > self.current_term:
-                        self._step_down(response.term)
+                        self._step_down_unsafe(response.term)
                         channel.close()
                         return
                     
                     if response.entry_appended:
                         self.match_index[peer_id] = response.match_index
                         self.next_index[peer_id] = response.match_index + 1
+                        self._update_commit_index_unsafe()
                     else:
+                        # Decrement on failure
                         self.next_index[peer_id] = max(0, self.next_index[peer_id] - 1)
                 
                 channel.close()
-            except Exception:
+                
+            except grpc.RpcError:
+                # Peer unavailable - normal during failures
                 pass
+            except Exception as e:
+                print(f"[{self.node_id}] Heartbeat error to {peer_id}: {e}", flush=True)
+        
+        # Launch all heartbeats in parallel
+        for peer_id, peer_addr in self.peers.items():
+            if peer_id != self.node_id:
+                threading.Thread(
+                    target=heartbeat_worker,
+                    args=(peer_id, peer_addr),
+                    daemon=True
+                ).start()
+    
+    def _update_commit_index_unsafe(self):
+        """Update commit index - MUST BE CALLED WITH LOCK HELD"""
+        if self.state != NodeState.LEADER:
+            return
+        
+        # Get match indices
+        match_indices = [len(self.log) - 1]
+        for peer_id in self.peers:
+            if peer_id != self.node_id:
+                match_indices.append(self.match_index.get(peer_id, -1))
+        
+        # Find majority
+        match_indices.sort()
+        majority_idx = match_indices[len(match_indices) // 2]
+        
+        # Update commit index if higher and from current term
+        if majority_idx > self.commit_index:
+            if majority_idx < len(self.log) and self.log[majority_idx]['term'] == self.current_term:
+                self.commit_index = majority_idx
+    
+    # ==================== RPC HANDLERS ====================
     
     def RequestVote(self, request, context):
         """Handle RequestVote RPC"""
         try:
-            from_node = getattr(request, 'from')
-            
-            print(f"[{self.node_id}] Received RequestVote from {from_node} for term {request.term}", flush=True)
-            
             with self.lock:
+                from_node = getattr(request, 'from')
+                
+                # Update term if higher
                 if request.term > self.current_term:
-                    self._step_down(request.term)
+                    self._step_down_unsafe(request.term)
                 
                 vote_granted = False
                 
+                # Grant vote if eligible
                 if request.term == self.current_term:
                     if self.voted_for is None or self.voted_for == from_node:
-                        last_log_index = len(self.log) - 1
-                        last_log_term = self.log[-1]['term'] if self.log else 0
+                        # Check log up-to-date
+                        last_idx = len(self.log) - 1
+                        last_term = self.log[-1]['term'] if self.log else 0
                         
-                        if (request.last_log_term > last_log_term or 
-                            (request.last_log_term == last_log_term and 
-                             request.last_log_index >= last_log_index)):
+                        log_ok = (request.last_log_term > last_term or
+                                 (request.last_log_term == last_term and 
+                                  request.last_log_index >= last_idx))
+                        
+                        if log_ok:
                             vote_granted = True
                             self.voted_for = from_node
-                            self.last_heartbeat = time.time()
-                            print(f"[{self.node_id}] Granted vote to {from_node} for term {request.term}", flush=True)
+                            self.last_heartbeat_time = time.time()
                 
-                current_term = self.current_term
-            
+                reply = raft_pb2.RequestVoteReply()
+                setattr(reply, 'from', self.node_id)
+                reply.to = from_node
+                reply.term = self.current_term
+                reply.vote_granted = vote_granted
+                
+                return reply
+                
+        except Exception as e:
+            print(f"[{self.node_id}] RequestVote error: {e}", flush=True)
             reply = raft_pb2.RequestVoteReply()
             setattr(reply, 'from', self.node_id)
-            reply.to = from_node
-            reply.term = current_term
-            reply.vote_granted = vote_granted
-            
+            reply.to = getattr(request, 'from', 'unknown')
+            reply.term = self.current_term
+            reply.vote_granted = False
             return reply
-            
-        except Exception as e:
-            print(f"[{self.node_id}] ERROR in RequestVote: {e}", flush=True)
-            raise
     
     def AppendEntries(self, request, context):
-        with self.lock:
-            from_node = getattr(request, 'from')
-            
-            if request.term > self.current_term:
-                self._step_down(request.term)
-            
-            self.last_heartbeat = time.time()
-            entry_appended = False
-            match_index = -1
-            
-            if request.term == self.current_term:
-                if self.state != NodeState.FOLLOWER:
-                    self.state = NodeState.FOLLOWER
+        """Handle AppendEntries RPC"""
+        try:
+            with self.lock:
+                from_node = getattr(request, 'from')
                 
-                if request.prev_index == -1 or (
-                    request.prev_index < len(self.log) and
-                    self.log[request.prev_index]['term'] == request.prev_term
-                ):
-                    entry_appended = True
+                # Update term if higher
+                if request.term > self.current_term:
+                    self._step_down_unsafe(request.term)
+                
+                # Reset election timer
+                self.last_heartbeat_time = time.time()
+                
+                entry_appended = False
+                match_idx = -1
+                
+                # Process if term matches
+                if request.term == self.current_term:
+                    # Become follower if candidate
+                    if self.state != NodeState.FOLLOWER:
+                        self.state = NodeState.FOLLOWER
                     
-                    if request.entries:
-                        insert_idx = request.prev_index + 1
-                        for i, entry in enumerate(request.entries):
-                            idx = insert_idx + i
-                            log_entry = {
-                                'term': entry.term,
-                                'command': entry.command,
-                                'result': None  # Will be filled when applied
-                            }
-                            if idx < len(self.log):
-                                self.log[idx] = log_entry
-                            else:
-                                self.log.append(log_entry)
+                    # Check log consistency
+                    log_ok = (request.prev_index == -1 or
+                             (request.prev_index < len(self.log) and
+                              self.log[request.prev_index]['term'] == request.prev_term))
+                    
+                    if log_ok:
+                        entry_appended = True
                         
-                        match_index = insert_idx + len(request.entries) - 1
-                    else:
-                        match_index = request.prev_index
-                    
-                    if request.commit_index > self.commit_index:
-                        self.commit_index = min(request.commit_index, len(self.log) - 1)
-                        self._apply_committed_entries()
-            
+                        # Append entries
+                        if request.entries:
+                            insert_idx = request.prev_index + 1
+                            
+                            for i, entry in enumerate(request.entries):
+                                idx = insert_idx + i
+                                new_entry = {
+                                    'term': entry.term,
+                                    'command': entry.command,
+                                    'result': None
+                                }
+                                
+                                if idx < len(self.log):
+                                    if self.log[idx]['term'] != entry.term:
+                                        self.log = self.log[:idx]
+                                        self.log.append(new_entry)
+                                else:
+                                    self.log.append(new_entry)
+                            
+                            match_idx = insert_idx + len(request.entries) - 1
+                        else:
+                            match_idx = request.prev_index
+                        
+                        # Update commit index
+                        if request.commit_index > self.commit_index:
+                            self.commit_index = min(request.commit_index, len(self.log) - 1)
+                
+                reply = raft_pb2.AppendEntriesReply()
+                setattr(reply, 'from', self.node_id)
+                reply.to = from_node
+                reply.term = self.current_term
+                reply.entry_appended = entry_appended
+                reply.match_index = match_idx
+                
+                return reply
+                
+        except Exception as e:
+            print(f"[{self.node_id}] AppendEntries error: {e}", flush=True)
             reply = raft_pb2.AppendEntriesReply()
             setattr(reply, 'from', self.node_id)
-            reply.to = from_node
+            reply.to = getattr(request, 'from', 'unknown')
             reply.term = self.current_term
-            reply.entry_appended = entry_appended
-            reply.match_index = match_index
-            
+            reply.entry_appended = False
+            reply.match_index = -1
             return reply
     
-    def _apply_committed_entries(self):
-        """Apply committed entries to state machine and store results"""
-        while self.last_applied < self.commit_index:
-            self.last_applied += 1
-            entry = self.log[self.last_applied]
-            
-            # Apply to state machine and store result
-            result = self.state_machine.apply_command(entry['command'])
-            entry['result'] = result
-            
-            print(f"[{self.node_id}] Applied log entry {self.last_applied}: {result}", flush=True)
+    # ==================== CLIENT API ====================
     
     def submit_command(self, command):
-        """
-        Submit command and return result after commitment
-        FIXED: Returns the actual state machine result
-        """
+        """Submit command - SIMPLIFIED VERSION"""
+        # Quick check if leader
         with self.lock:
             if self.state != NodeState.LEADER:
                 return {'status': 'error', 'message': 'Not leader'}
             
-            # Append to log with placeholder result
-            log_entry = {
+            # Append to log
+            entry = {
                 'term': self.current_term,
                 'command': command,
                 'result': None
             }
-            self.log.append(log_entry)
-            log_index = len(self.log) - 1
-            
-            print(f"[{self.node_id}] Command submitted to log index {log_index}", flush=True)
+            self.log.append(entry)
+            log_idx = len(self.log) - 1
         
-        # Trigger immediate heartbeat to replicate
+        # Trigger replication
         self._send_heartbeats()
         
-        # Wait for replication with timeout
-        max_wait = 5.0
-        start_time = time.time()
+        # Wait for commit
+        timeout = 10.0
+        start = time.time()
         
-        while time.time() - start_time < max_wait:
+        while time.time() - start < timeout:
             with self.lock:
                 if self.state != NodeState.LEADER:
                     return {'status': 'error', 'message': 'Lost leadership'}
                 
-                # Check if command is replicated to majority
-                match_indices = [log_index] + [self.match_index.get(p, -1) for p in self.peers if p != self.node_id]
-                match_indices.sort()
-                majority_index = match_indices[len(match_indices) // 2]
-                
-                if majority_index >= log_index:
-                    # Command replicated to majority
-                    if self.commit_index < log_index:
-                        self.commit_index = log_index
-                        self._apply_committed_entries()
-                    
-                    print(f"[{self.node_id}] Command committed at index {log_index}", flush=True)
-                    
-                    # FIXED: Return the actual result from state machine
-                    result = self.log[log_index]['result']
+                if self.commit_index >= log_idx:
+                    result = self.log[log_idx].get('result')
                     if result:
                         return result
-                    else:
-                        return {'status': 'success', 'message': 'Command committed'}
             
-            time.sleep(0.1)
+            time.sleep(0.05)
         
-        print(f"[{self.node_id}] Command replication timeout at index {log_index}", flush=True)
-        return {'status': 'error', 'message': 'Replication timeout'}
+        return {'status': 'error', 'message': 'Timeout'}
     
     def is_leader(self):
+        """Check if leader"""
         with self.lock:
             return self.state == NodeState.LEADER
     
     def get_leader_info(self):
+        """Get info"""
         with self.lock:
             return {
                 'is_leader': self.state == NodeState.LEADER,
