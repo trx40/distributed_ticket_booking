@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Ultra-Robust Raft Implementation
-Key principle: NEVER hold locks during I/O operations
+Complete Working Raft Implementation
+Fixes: idx variable, split votes, crash prevention
 """
 
 import grpc
@@ -13,7 +13,6 @@ import sys
 import os
 from concurrent import futures
 from enum import Enum
-from queue import Queue, Empty
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -58,9 +57,6 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
         # Simple lock - only for updating state variables
         self.lock = threading.Lock()
         
-        # Command queue for clients
-        self.pending_commands = Queue()
-        
         # Control flag
         self.running = True
         
@@ -103,7 +99,7 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
     
     def _election_loop(self):
         """Monitor election timeout and trigger elections"""
-        time.sleep(2.0)  # Initial delay
+        time.sleep(2.0)
         print(f"[{self.node_id}] Election loop started", flush=True)
         
         while self.running:
@@ -148,11 +144,15 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
                 time.sleep(1)
     
     def _apply_loop(self):
-        """Apply committed entries to state machine"""
+        """Apply committed entries to state machine - FIXED"""
         time.sleep(2.0)
         print(f"[{self.node_id}] Apply loop started", flush=True)
         
         while self.running:
+            # Initialize at function scope to avoid UnboundLocalError
+            idx = None
+            command = None
+            
             try:
                 time.sleep(0.1)
                 
@@ -166,22 +166,22 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
                         if idx < len(self.log):
                             entry = self.log[idx]
                             command = entry['command']
-                        else:
-                            continue
                 
-                # Apply to state machine WITHOUT holding lock
-                try:
-                    result = self.state_machine.apply_command(command)
-                    
-                    # Store result
-                    with self.lock:
-                        if idx < len(self.log):
-                            self.log[idx]['result'] = result
-                    
-                    print(f"[{self.node_id}] Applied entry {idx}", flush=True)
-                except Exception as e:
-                    print(f"[{self.node_id}] Error applying entry {idx}: {e}", flush=True)
-                    
+                # Only apply if we have a valid command
+                if idx is not None and command is not None:
+                    # Apply to state machine WITHOUT holding lock
+                    try:
+                        result = self.state_machine.apply_command(command)
+                        
+                        # Store result
+                        with self.lock:
+                            if idx < len(self.log):
+                                self.log[idx]['result'] = result
+                        
+                        print(f"[{self.node_id}] Applied entry {idx}", flush=True)
+                    except Exception as e:
+                        print(f"[{self.node_id}] Error applying entry {idx}: {e}", flush=True)
+                        
             except Exception as e:
                 print(f"[{self.node_id}] Apply loop error: {e}", flush=True)
                 time.sleep(1)
@@ -197,6 +197,7 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
                 self.current_term += 1
                 self.voted_for = self.node_id
                 self.last_heartbeat_time = time.time()
+                # Randomize timeout to avoid repeated split votes
                 self.election_timeout = random.uniform(5.0, 10.0)
                 
                 term = self.current_term
@@ -237,6 +238,8 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
                             nonlocal votes
                             votes += 1
                         print(f"[{self.node_id}] Got vote from {peer_id}", flush=True)
+                    else:
+                        print(f"[{self.node_id}] Vote DENIED by {peer_id}", flush=True)
                     
                     # Check for higher term
                     if response.term > term:
@@ -246,7 +249,7 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
                     
                     channel.close()
                     
-                except grpc.RpcError as e:
+                except grpc.RpcError:
                     # Node unavailable - this is NORMAL during failures
                     pass
                 except Exception as e:
@@ -277,11 +280,15 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
                 # Only become leader if still candidate and won
                 if self.state == NodeState.CANDIDATE and votes >= majority:
                     self._become_leader_unsafe()
+                elif self.state == NodeState.CANDIDATE:
+                    # Failed election - back to follower with new random timeout
+                    print(f"[{self.node_id}] Election failed, back to FOLLOWER", flush=True)
+                    self.state = NodeState.FOLLOWER
+                    self.election_timeout = random.uniform(5.0, 10.0)
+                    self.last_heartbeat_time = time.time()
                     
         except Exception as e:
             print(f"[{self.node_id}] Election error: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
     
     def _become_leader_unsafe(self):
         """Become leader - MUST BE CALLED WITH LOCK HELD"""
@@ -302,6 +309,8 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
             self.voted_for = None
             self.state = NodeState.FOLLOWER
             self.last_heartbeat_time = time.time()
+            # Randomize timeout to avoid synchronized elections
+            self.election_timeout = random.uniform(5.0, 10.0)
     
     # ==================== HEARTBEAT LOGIC ====================
     
@@ -325,7 +334,7 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
                     
                     next_idx = self.next_index.get(peer_id, len(self.log))
                     prev_idx = next_idx - 1
-                    prev_term = self.log[prev_idx]['term'] if prev_idx >= 0 else 0
+                    prev_term = self.log[prev_idx]['term'] if prev_idx >= 0 and prev_idx < len(self.log) else 0
                     
                     # Get entries to send
                     entries_to_send = []
@@ -441,6 +450,11 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
                             vote_granted = True
                             self.voted_for = from_node
                             self.last_heartbeat_time = time.time()
+                            print(f"[{self.node_id}] Granted vote to {from_node} for term {request.term}", flush=True)
+                        else:
+                            print(f"[{self.node_id}] Denied vote to {from_node} - log not up-to-date", flush=True)
+                    else:
+                        print(f"[{self.node_id}] Denied vote to {from_node} - already voted for {self.voted_for}", flush=True)
                 
                 reply = raft_pb2.RequestVoteReply()
                 setattr(reply, 'from', self.node_id)

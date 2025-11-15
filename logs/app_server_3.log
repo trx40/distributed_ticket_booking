@@ -11,146 +11,36 @@
 [AppServer-node3] LLM server: localhost:50060
 [AppServer-node3] Server started on port 50053
 [AppServer-node3] Waiting for Raft initialization...
-[node3] Heartbeat loop started
-[node3] Election loop started
-[node3] Apply loop started
-[node3] Apply loop error: local variable 'idx' referenced before assignment
 [node3] Stepping down to term 1
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
+[node3] Granted vote to node1 for term 1
+[node3] Election loop started
+[node3] Heartbeat loop started
+[node3] Apply loop started
 [AppServer-node3] Raft Status: FOLLOWER (Term: 1)
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
-[node3] Apply loop error: local variable 'idx' referenced before assignment
+[node3] Starting election for term 2
+[node3] Vote DENIED by node2
+[node3] Election result: 1/3 votes (need 2)
+[node3] Election failed, back to FOLLOWER
+[node3] Denied vote to node2 - already voted for node3
+[node3] Stepping down to term 3
+[node3] Granted vote to node2 for term 3
+[node3] Applied entry 0
+[node3] Applied entry 1
+[node3] Applied entry 2
+[node3] Applied entry 3
+[node3] Applied entry 4
+[node3] Applied entry 5
+[node3] Applied entry 6
+[node3] Applied entry 7
+[node3] Applied entry 8
+[node3] Applied entry 9
+[node3] Applied entry 10
+[node3] Applied entry 11
+[node3] Applied entry 12
+[node3] Applied entry 13
+[node3] Applied entry 14
+[node3] Applied entry 15
+[node3] Applied entry 16
+[node3] Applied entry 17
+[node3] Applied entry 18
+[node3] Applied entry 19

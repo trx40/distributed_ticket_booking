@@ -1,0 +1,137 @@
+==================================================
+  LEADER FAILOVER TEST
+==================================================
+
+[1/8] Cleaning up old processes...
+
+[2/8] Starting system...
+Waiting 20 seconds for full initialization...
+==================================================
+  Starting Distributed Ticket Booking System     
+==================================================
+
+[Node 1] Starting LLM Server on port 50060...
+LLM Server PID: 18747
+
+[Node 2] Starting Application Server 1 (Raft port 50061, App port 50051)...
+App Server 1 PID: 18781
+
+[Node 3] Starting Application Server 2 (Raft port 50062, App port 50052)...
+App Server 2 PID: 18801
+
+[Node 4] Starting Application Server 3 (Raft port 50063, App port 50053)...
+App Server 3 PID: 18823
+
+✓ All servers started!
+==================================================
+  System Status
+==================================================
+LLM Server:       localhost:50060 (PID: 18747)
+App Server 1:     localhost:50051 (PID: 18781)
+App Server 2:     localhost:50052 (PID: 18801)
+App Server 3:     localhost:50053 (PID: 18823)
+==================================================
+
+Logs are in ./logs/ directory
+Press Ctrl+C to stop all services
+
+
+[3/8] Checking if all nodes started...
+Running application servers: 4/3
+
+[4/8] Finding the leader...
+✓ Leader is: node1
+
+[5/8] Getting leader PID...
+Leader PID: 18781
+18801
+18823
+
+[6/8] Status before killing leader...
+tejas      18781  1.1  0.2 1536140 41652 pts/0   Sl+  17:15   0:00 python3 application_server.py --node-id node1 --port 50051 --raft-port 50061 --llm-server localhost:50060 --peers node1:localhost:50061,node2:localhost:50062,node3:localhost:50063
+tejas      18801  1.0  0.2 1461168 39732 pts/0   Sl+  17:15   0:00 python3 application_server.py --node-id node2 --port 50052 --raft-port 50062 --llm-server localhost:50060 --peers node1:localhost:50061,node2:localhost:50062,node3:localhost:50063
+tejas      18823  1.2  0.2 1461168 39860 pts/0   Sl+  17:15   0:00 python3 application_server.py --node-id node3 --port 50053 --raft-port 50063 --llm-server localhost:50060 --peers node1:localhost:50061,node2:localhost:50062,node3:localhost:50063
+
+Follower nodes should be running:
+  node2: PID=18781
+18801
+18823
+  node3: PID=18781
+18801
+18823
+
+[7/8] KILLING LEADER: node1 (PID: 18781
+18801
+18823)
+Leader killed at: Saturday 15 November 2025 05:15:22 PM IST
+
+[8/8] Monitoring followers for 15 seconds...
+T-15: Alive=0 
+T-14: Alive=0 
+T-13: Alive=0 
+T-12: Alive=0 
+T-11: Alive=0 
+T-10: Alive=0 
+T-9: Alive=0 
+T-8: Alive=0 
+T-7: Alive=0 
+T-6: Alive=0 
+T-5: Alive=0 
+T-4: Alive=0 
+T-3: Alive=0 
+T-2: Alive=0 
+T-1: Alive=0 
+
+==================================================
+  FINAL STATUS
+==================================================
+Surviving nodes: 0/2
+✗✗ TEST FAILED - Followers crashed!
+
+Checking logs for crash reason...
+
+=== node2 last 30 lines ===
+[DEBUG] Application server starting...
+[AppServer-node2] Initializing...
+[AppServer-node2] Auth manager initialized
+[node2] Raft node initialized
+[AppServer-node2] Raft node created
+[node2] gRPC server started on port 50062
+[node2] Background threads started
+[AppServer-node2] Raft node started
+[AppServer-node2] Initialized on port 50052
+[AppServer-node2] Raft node on port 50062
+[AppServer-node2] LLM server: localhost:50060
+[AppServer-node2] Server started on port 50052
+[AppServer-node2] Waiting for Raft initialization...
+[node2] Election loop started
+[node2] Heartbeat loop started
+[node2] Apply loop started
+[AppServer-node2] Raft Status: FOLLOWER (Term: 0)
+[node2] Stepping down to term 1
+
+=== node3 last 30 lines ===
+[DEBUG] Application server starting...
+[AppServer-node3] Initializing...
+[AppServer-node3] Auth manager initialized
+[node3] Raft node initialized
+[AppServer-node3] Raft node created
+[node3] gRPC server started on port 50063
+[node3] Background threads started
+[AppServer-node3] Raft node started
+[AppServer-node3] Initialized on port 50053
+[AppServer-node3] Raft node on port 50063
+[AppServer-node3] LLM server: localhost:50060
+[AppServer-node3] Server started on port 50053
+[AppServer-node3] Waiting for Raft initialization...
+[node3] Apply loop started
+[node3] Election loop started
+[node3] Heartbeat loop started
+[node3] Stepping down to term 1
+[AppServer-node3] Raft Status: FOLLOWER (Term: 1)
+
+To see full logs:
+  tail -50 logs/app_server_2.log
+  tail -50 logs/app_server_3.log
+
+==================================================

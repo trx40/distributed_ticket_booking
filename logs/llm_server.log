@@ -1,5 +1,3 @@
-[LLM Server] Initializing...
-[LLM Server] Loading model (this may take a minute)...
 
 A module that was compiled using NumPy 1.x cannot be run in
 NumPy 2.0.2 as it may crash. To support both 1.x and 2.x
@@ -40,8 +38,3 @@ Traceback (most recent call last):  File "/home/tejas/Project_claude/distributed
   device: torch.device = torch.device(torch._C._get_default_device()),  # torch.device('cpu'),
 /home/tejas/Project_claude/distributed_ticket_booking/venv/lib/python3.9/site-packages/huggingface_hub/file_download.py:942: FutureWarning: `resume_download` is deprecated and will be removed in version 1.0.0. Downloads always resume when possible. If you want to force a new download, use `force_download=True`.
   warnings.warn(
-[LLM Server] Model loaded successfully
-[LLM Server] Initialization complete
-[LLM Server] Started on port 50060
-[LLM Server] Ready to handle queries
-------------------------------------------------------------
