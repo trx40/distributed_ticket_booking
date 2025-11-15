@@ -20,13 +20,5 @@
 [node3] Received RequestVote from node1 for term 1
 [node3] Stepping down to FOLLOWER (term 1)
 [node3] Granted vote to node1 for term 1
-[node3] Sending RequestVote response to node1: granted=True
 [AppServer-node3] Raft Status: FOLLOWER (Term: 1)
-[node3] Received RequestVote from test for term 0
-[node3] Denied vote to test - term mismatch (0 vs 1)
-[node3] Sending RequestVote response to test: granted=False
-[node3] Received RequestVote from test for term 0
-[node3] Denied vote to test - term mismatch (0 vs 1)
-[node3] Sending RequestVote response to test: granted=False
-[node3] Applied log entry 0: {'status': 'success', 'message': 'Booking confirmed', 'booking_id': 'BK000001', 'details': {'booking_id': 'BK000001', 'username': 'user1', 'movie_id': 'movie1', 'movie_title': 'The Matrix Reloaded', 'seats': [50, 51, 52], 'price': 45.0, 'status': 'confirmed', 'timestamp': '2025-11-15T12:17:35.563951'}}
-[node3] Applied log entry 1: {'status': 'success', 'message': 'Booking confirmed', 'booking_id': 'BK000002', 'details': {'booking_id': 'BK000002', 'username': 'user1', 'movie_id': 'movie3', 'movie_title': 'Interstellar Journey', 'seats': [11, 12, 13], 'price': 54.0, 'status': 'confirmed', 'timestamp': '2025-11-15T12:18:58.000056'}}
+[node3] Applied log entry 0: {'status': 'success', 'message': 'Booking confirmed', 'booking_id': 'BK000001', 'details': {'booking_id': 'BK000001', 'username': 'user1', 'movie_id': 'movie1', 'movie_title': 'The Matrix Reloaded', 'seats': [1, 2, 3], 'price': 45.0, 'status': 'confirmed', 'timestamp': '2025-11-15T14:41:45.814018'}}

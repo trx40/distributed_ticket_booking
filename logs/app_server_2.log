@@ -15,18 +15,10 @@
 [AppServer-node2] LLM server: localhost:50060
 [AppServer-node2] Server started on port 50052
 [AppServer-node2] Waiting for Raft initialization...
-[node2] Heartbeat timer started
 [node2] Election timer started
+[node2] Heartbeat timer started
+[AppServer-node2] Raft Status: FOLLOWER (Term: 0)
 [node2] Received RequestVote from node1 for term 1
 [node2] Stepping down to FOLLOWER (term 1)
 [node2] Granted vote to node1 for term 1
-[node2] Sending RequestVote response to node1: granted=True
-[AppServer-node2] Raft Status: FOLLOWER (Term: 1)
-[node2] Received RequestVote from test for term 0
-[node2] Denied vote to test - term mismatch (0 vs 1)
-[node2] Sending RequestVote response to test: granted=False
-[node2] Received RequestVote from test for term 0
-[node2] Denied vote to test - term mismatch (0 vs 1)
-[node2] Sending RequestVote response to test: granted=False
-[node2] Applied log entry 0: {'status': 'success', 'message': 'Booking confirmed', 'booking_id': 'BK000001', 'details': {'booking_id': 'BK000001', 'username': 'user1', 'movie_id': 'movie1', 'movie_title': 'The Matrix Reloaded', 'seats': [50, 51, 52], 'price': 45.0, 'status': 'confirmed', 'timestamp': '2025-11-15T12:17:35.562097'}}
-[node2] Applied log entry 1: {'status': 'success', 'message': 'Booking confirmed', 'booking_id': 'BK000002', 'details': {'booking_id': 'BK000002', 'username': 'user1', 'movie_id': 'movie3', 'movie_title': 'Interstellar Journey', 'seats': [11, 12, 13], 'price': 54.0, 'status': 'confirmed', 'timestamp': '2025-11-15T12:18:57.997651'}}
+[node2] Applied log entry 0: {'status': 'success', 'message': 'Booking confirmed', 'booking_id': 'BK000001', 'details': {'booking_id': 'BK000001', 'username': 'user1', 'movie_id': 'movie1', 'movie_title': 'The Matrix Reloaded', 'seats': [1, 2, 3], 'price': 45.0, 'status': 'confirmed', 'timestamp': '2025-11-15T14:41:45.812171'}}
